@@ -482,9 +482,9 @@ export async function startGateway() {
   // tells OpenClaw to use a 128K context window for these providers.
   if (config.models && typeof config.models === 'object') {
     for (const [key, provider] of Object.entries(config.models)) {
-      if (provider && provider.provider === 'openai-compatible' && !provider.contextWindow) {
-        provider.contextWindow = 131072;
-        console.log(`Auto-set contextWindow=131072 for custom provider "${key}"`);
+      if (provider && provider.provider === 'openai-compatible' && (!provider.contextWindow || provider.contextWindow < 32000)) {
+        provider.contextWindow = 200000;
+        console.log(`Auto-set contextWindow=200000 for custom provider "${key}"`);
       }
     }
   }

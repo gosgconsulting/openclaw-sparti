@@ -262,7 +262,9 @@ const AUTH_GROUPS = [
         secretOptional: true,
         extraFields: [
           { id: 'custom-base-url', label: 'Base URL', flag: '--custom-base-url', placeholder: 'https://api.example.com/v1' },
-          { id: 'custom-model-id', label: 'Model ID', flag: '--custom-model-id', placeholder: 'gpt-4o' }
+          { id: 'custom-model-id', label: 'Model ID', flag: '--custom-model-id', placeholder: 'gpt-4o' },
+          { id: 'custom-provider-name', label: 'Provider Name', placeholder: 'e.g. Plano, LocalAI', optional: true, noFlag: true },
+          { id: 'custom-context-window', label: 'Context Window', placeholder: '200000', optional: true, noFlag: true, type: 'number' }
         ]
       }
     ]
@@ -554,6 +556,7 @@ app.post('/onboard/api/run', authMiddleware, async (req, res) => {
     // Handle extra fields (e.g., Cloudflare account/gateway IDs)
     if (opt?.extraFields && extraFieldValues) {
       for (const field of opt.extraFields) {
+        if (field.noFlag) continue;
         const val = extraFieldValues[field.id];
         if (val && field.flag) {
           onboardArgs.push(field.flag, val);
@@ -577,6 +580,35 @@ app.post('/onboard/api/run', authMiddleware, async (req, res) => {
         return res.json({ success: false, logs });
       }
       logs.push('(Gateway verification skipped — gateway will be started next)');
+    }
+
+    // Patch custom provider fields that the CLI doesn't handle (provider name, context window)
+    const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+    if (existsSync(configFile) && extraFieldValues) {
+      try {
+        const config = JSON.parse(readFileSync(configFile, 'utf8'));
+        if (config.models) {
+          for (const [key, provider] of Object.entries(config.models)) {
+            if (provider && provider.provider === 'openai-compatible') {
+              const ctxVal = extraFieldValues['custom-context-window'];
+              if (ctxVal) {
+                provider.contextWindow = parseInt(ctxVal, 10);
+                logs.push(`Set contextWindow=${provider.contextWindow} for provider "${key}"`);
+              }
+              // Rename provider key if custom name provided
+              const newName = extraFieldValues['custom-provider-name']?.trim();
+              if (newName && newName !== key) {
+                config.models[newName] = provider;
+                delete config.models[key];
+                logs.push(`Renamed provider "${key}" → "${newName}"`);
+              }
+            }
+          }
+          writeFileSync(configFile, JSON.stringify(config, null, 2));
+        }
+      } catch (e) {
+        logs.push(`Warning: failed to patch custom provider config: ${e.message}`);
+      }
     }
 
     // Install skill files to disk (downloads are independent of gateway state)

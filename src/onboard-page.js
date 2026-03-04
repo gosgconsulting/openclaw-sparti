@@ -1797,7 +1797,7 @@ export function getSetupPageHTML({ isConfigured, gatewayInfo, password, stateDir
         // Validate extra fields if present
         var extraInputs = document.querySelectorAll('.extra-field-input');
         for (var k = 0; k < extraInputs.length; k++) {
-          if (!extraInputs[k].value.trim()) {
+          if (!extraInputs[k].value.trim() && extraInputs[k].getAttribute('data-optional') !== 'true') {
             showStep2Error(t('step2.err.missingFields'));
             return;
           }
@@ -1961,12 +1961,13 @@ export function getSetupPageHTML({ isConfigured, gatewayInfo, password, stateDir
               fg.className = 'form-group';
               var lbl = document.createElement('label');
               lbl.className = 'form-label';
-              lbl.textContent = ef.label;
+              lbl.textContent = ef.label + (ef.optional ? ' (optional)' : '');
               fg.appendChild(lbl);
               var inp = document.createElement('input');
-              inp.type = 'text';
+              inp.type = ef.type || 'text';
               inp.className = 'form-input extra-field-input';
               inp.setAttribute('data-field-id', ef.id);
+              if (ef.optional) inp.setAttribute('data-optional', 'true');
               inp.placeholder = ef.placeholder || '';
               fg.appendChild(inp);
               container.appendChild(fg);
