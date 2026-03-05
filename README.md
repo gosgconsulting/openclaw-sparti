@@ -97,6 +97,60 @@ Built-in Playwright with Chromium pre-installed for browser-based tools and auto
 
 - **SearXNG search** — auto-enabled when `SEARXNG_URL` is set (see [OpenClaw + SearXNG template](https://railway.com/deploy/jOiw-W))
 
+### Using Plano as an LLM Gateway
+
+[Plano](https://github.com/katanemo/plano) is an AI-native proxy that sits in front of LLM providers and adds routing, rate limiting, and cost controls. You can deploy OpenClaw alongside Plano using the [OpenClaw + Plano template](https://railway.com/deploy/plano-ai).
+
+**Important:** OpenClaw does **not** use the `OPENAI_BASE_URL` environment variable. It has its own provider system that connects directly to configured API endpoints. To route OpenClaw traffic through Plano, you must configure a **custom provider** pointing to Plano's internal URL.
+
+#### Setup
+
+During onboard, select the **"Custom / OpenAI-compatible"** provider and configure:
+
+| Field | Value |
+|-------|-------|
+| **API Base URL** | `http://plano.railway.internal:12000/v1` |
+| **API Key** | Your actual LLM provider API key (Plano passes it through) |
+| **Model ID** | Must match a model registered in Plano (e.g., `gpt-4o`) |
+| **Context Window** | Set to match your model (e.g., `128000` for GPT-4o, `200000` for Claude) |
+
+This writes the following config structure in `openclaw.json`:
+
+```json
+{
+  "models": {
+    "providers": {
+      "my-plano": {
+        "baseUrl": "http://plano.railway.internal:12000/v1",
+        "api": "openai-completions",
+        "apiKey": "sk-...",
+        "models": [
+          {
+            "id": "gpt-4o",
+            "contextWindow": 128000,
+            "maxTokens": 4096
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "my-plano/gpt-4o"
+      }
+    }
+  }
+}
+```
+
+#### Common pitfalls
+
+- **Model name mismatch** — The model ID in OpenClaw's config must exactly match a model registered in Plano. If Plano has `openai/gpt-4o` registered but OpenClaw sends `gpt-5.2`, Plano returns HTTP 400 and OpenClaw retries in a loop, flooding logs.
+- **Context window too small** — If context window is unset or below 16,000 tokens, OpenClaw refuses to use the model. The wrapper auto-sets it to 200,000 if it detects a value below 32,000, but you can override this in the config editor or during onboard.
+- **Plano idles without traffic** — Railway idles internal-only services (no public domain) after ~15 minutes of inactivity. If OpenClaw is also idle, Plano may take a few seconds to wake up on the next request.
+- **PORT must be set on Plano** — Services without a public domain don't get a `PORT` env var automatically. The Plano template sets `PORT=12000` explicitly; do not remove it.
+
 ### Internationalization
 
 Management dashboard and setup wizard available in 5 languages: English, Traditional Chinese, Simplified Chinese, Japanese, Korean. Auto-detected from browser with manual override.
@@ -602,6 +656,7 @@ OPENCLAW_URL=${{OpenClaw.RAILWAY_PRIVATE_DOMAIN}}:${{OpenClaw.PORT}}
 - [Railway Documentation](https://docs.railway.app)
 - [Report Issues](https://github.com/protemplate/openclaw-railway/issues)
 - [OpenClaw + SearXNG Template](https://railway.com/deploy/jOiw-W)
+- [OpenClaw + Plano Template](https://railway.com/deploy/plano-ai)
 
 ## License
 
