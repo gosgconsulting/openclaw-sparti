@@ -33,23 +33,25 @@ function writeToPtyCharByChar(ptyProcess, data, delayMs = 5) {
 }
 
 /**
- * Verify WebSocket authentication from cookies or query params
+ * Verify WebSocket authentication from cookies or query params.
+ * Supports either the legacy setup-password cookie/query param OR Supabase auth cookies.
  * @param {http.IncomingMessage} req - HTTP request
- * @param {string} password - Required password
+ * @param {string | null | undefined} password - Optional legacy password
  * @returns {boolean} True if authenticated
  */
 function verifyAuth(req, password) {
-  // Check query parameter
   const url = parseUrl(req.url, true);
-  if (url.query.password === password) {
-    return true;
+  const cookies = parseCookie(req.headers.cookie || '');
+  const pw = typeof password === 'string' && password.length > 0 ? password : null;
+
+  // Legacy: setup password (query + cookie)
+  if (pw) {
+    if (url.query.password === pw) return true;
+    if (cookies.openclaw_auth === pw) return true;
   }
 
-  // Check cookie
-  const cookies = parseCookie(req.headers.cookie || '');
-  if (cookies.openclaw_auth === password) {
-    return true;
-  }
+  // Supabase: session cookies (server-side validated elsewhere; this gates WS access)
+  if (cookies.sb_access_token || cookies.sb_refresh_token) return true;
 
   return false;
 }
@@ -57,7 +59,7 @@ function verifyAuth(req, password) {
 /**
  * Create a WebSocket server for terminal sessions
  * @param {http.Server} httpServer - HTTP server to attach to
- * @param {string} password - Setup password for authentication
+ * @param {string | null | undefined} password - Optional legacy setup password for authentication
  * @returns {WebSocketServer} The WebSocket server instance
  */
 export function createTerminalServer(httpServer, password) {

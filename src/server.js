@@ -3,7 +3,7 @@
  *
  * Express server that:
  * 1. Exposes health check endpoints (no auth required)
- * 2. Protects /onboard with SETUP_PASSWORD
+ * 2. Protects /onboard with Supabase auth (/auth)
  * 3. Provides web terminal for `openclaw onboard` wizard
  * 4. Spawns and monitors OpenClaw gateway process
  * 5. Reverse proxies traffic to the gateway
@@ -24,24 +24,155 @@ import { CHANNEL_GROUPS, buildChannelConfig, getChannelIcon, getRequiredPlugin }
 import { validate, migrateConfig, getAllSchemas } from './schema/index.js';
 
 import healthRouter, { setGatewayReady } from './health.js';
-import { createAuthMiddleware } from './auth.js';
 import { startGateway, stopGateway, isGatewayRunning, getGatewayInfo, getGatewayToken, runCmd, runExec, deleteConfig, getRecentLogs, getGatewayUptime } from './gateway.js';
 import { gatewayRPC } from './gateway-rpc.js';
 import { createProxy } from './proxy.js';
 import { createTerminalServer, closeAllSessions } from './terminal.js';
 import { getSetupPageHTML } from './onboard-page.js';
 import { getUIPageHTML } from './ui-page.js';
-import { getLoginPageHTML } from './login-page.js';
 import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
 import { getInstanceConsolePageHTML } from './console-page.js';
-import { createSupabaseClient } from './supabase.js';
+import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
+import { listComposioApps } from './integrations/composio.js';
 
 // Configuration
 const PORT = process.env.PORT || 8080;
-const SETUP_PASSWORD = process.env.SETUP_PASSWORD;
 const OPENCLAW_STATE_DIR = process.env.OPENCLAW_STATE_DIR || '/data/.openclaw';
+
+function getOptionalEnv(name) {
+  const v = process.env[name];
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+function parseOptionalInt(value, fallback) {
+  const n = parseInt(String(value || ''), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeKey(s) {
+  return String(s || '').trim().toLowerCase().replaceAll(/\s+/g, '_');
+}
+
+function pickAppByCandidates(apps, candidates) {
+  const want = new Set((candidates || []).map(normalizeKey).filter(Boolean));
+  if (want.size === 0) return null;
+  for (const a of apps || []) {
+    const k = normalizeKey(a?.key || a?.name);
+    if (want.has(k)) return a;
+  }
+  return null;
+}
+
+/**
+ * SaaS mode bootstrap: create openclaw.json from LLM Gateway env vars if missing.
+ * This avoids the interactive /onboard wizard for end-users.
+ */
+async function getSharedLlmGatewayConfigFromSupabase() {
+  // Optional fallback. Only works if you provide SUPABASE_SERVICE_ROLE_KEY
+  // and you have a table to store global settings.
+  try {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+    const admin = createSupabaseAdminClient();
+
+    // Expected schema (recommended):
+    // public.app_settings(key text primary key, value jsonb not null)
+    // Row: key='llm_gateway', value={ base_url, api_key, model_id, provider_id?, context_window?, max_tokens? }
+    const { data, error } = await admin
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'llm_gateway')
+      .maybeSingle();
+
+    if (error || !data?.value) return null;
+    const v = data.value;
+    if (!v || typeof v !== 'object') return null;
+
+    return {
+      baseUrl: String(v.base_url || v.baseUrl || '').trim(),
+      apiKey: String(v.api_key || v.apiKey || '').trim(),
+      modelId: String(v.model_id || v.modelId || '').trim(),
+      providerId: String(v.provider_id || v.providerId || '').trim(),
+      contextWindow: v.context_window ?? v.contextWindow,
+      maxTokens: v.max_tokens ?? v.maxTokens,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function ensureOpenClawConfigFromEnv() {
+  const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+  if (existsSync(configFile)) return { configured: true, created: false };
+
+  let baseUrl = getOptionalEnv('LLM_GATEWAY_BASE_URL');
+  let apiKey = getOptionalEnv('LLM_GATEWAY_API_KEY');
+  let modelId = getOptionalEnv('LLM_GATEWAY_MODEL_ID');
+  let providerId = getOptionalEnv('LLM_GATEWAY_PROVIDER_ID') || 'llm-gateway';
+  let contextWindowRaw = getOptionalEnv('LLM_GATEWAY_CONTEXT_WINDOW');
+  let maxTokensRaw = getOptionalEnv('LLM_GATEWAY_MAX_TOKENS');
+
+  if (!baseUrl || !apiKey || !modelId) {
+    const fromDb = await getSharedLlmGatewayConfigFromSupabase();
+    if (fromDb?.baseUrl && fromDb?.apiKey && fromDb?.modelId) {
+      baseUrl = fromDb.baseUrl;
+      apiKey = fromDb.apiKey;
+      modelId = fromDb.modelId;
+      providerId = fromDb.providerId || providerId;
+      if (fromDb.contextWindow != null) contextWindowRaw = String(fromDb.contextWindow);
+      if (fromDb.maxTokens != null) maxTokensRaw = String(fromDb.maxTokens);
+    }
+  }
+
+  if (!baseUrl || !apiKey || !modelId) {
+    return {
+      configured: false,
+      created: false,
+      reason: 'Missing shared LLM Gateway config. Set LLM_GATEWAY_* env vars OR store it in Supabase app_settings(key=llm_gateway).',
+    };
+  }
+
+  const contextWindow = parseOptionalInt(contextWindowRaw, 200000);
+  const maxTokens = parseOptionalInt(maxTokensRaw, 4096);
+
+  const config = {
+    models: {
+      providers: {
+        [providerId]: {
+          baseUrl,
+          api: 'openai-completions',
+          apiKey,
+          models: [
+            {
+              id: modelId,
+              contextWindow,
+              maxTokens,
+            }
+          ],
+        },
+      },
+    },
+    agents: {
+      defaults: {
+        model: {
+          primary: `${providerId}/${modelId}`,
+        },
+      },
+    },
+    channels: {},
+  };
+
+  // Validate to avoid writing invalid config shapes.
+  const result = validate(config);
+  if (!result.valid) {
+    return { configured: false, created: false, reason: 'Generated config failed validation' };
+  }
+
+  mkdirSync(OPENCLAW_STATE_DIR, { recursive: true });
+  writeFileSync(configFile, JSON.stringify(config, null, 2));
+  return { configured: true, created: true };
+}
 
 // Custom SVG paths for providers not in simple-icons (viewBox 0 0 24 24)
 const CUSTOM_ICONS = {
@@ -479,20 +610,223 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/dashboard', requireUser(), async (req, res) => {
   try {
+    // Ensure SaaS bootstrap config exists (if env vars provided).
+    await ensureOpenClawConfigFromEnv();
+
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
     const { data, error } = await supabase
       .from('instances')
       .select('id,name,status,public_url,created_at')
+      .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
 
     if (error) {
-      return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: error.message }));
+      return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instance: null, channelGroups: CHANNEL_GROUPS, channelsConfig: {}, error: error.message }));
     }
 
-    return res.send(getDashboardPageHTML({ userEmail: req.user?.email, instances: data || [] }));
+    // SaaS mode: exactly one instance per user. Auto-create on first visit.
+    let instances = data || [];
+    if (instances.length === 0) {
+      const email = (req.user?.email || '').trim();
+      const baseName = email ? email.split('@')[0] : 'workspace';
+      const name = `Workspace · ${baseName}`.slice(0, 80);
+      const created = await supabase
+        .from('instances')
+        .insert({ user_id: req.user.id, name })
+        .select('id,name,status,public_url,created_at')
+        .single();
+      if (created.error) {
+        return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instance: null, channelGroups: CHANNEL_GROUPS, channelsConfig: {}, error: created.error.message }));
+      }
+      instances = [created.data];
+    } else if (instances.length > 1) {
+      // Defensive: if historical data exists, keep newest only for the dashboard.
+      instances = [instances[0]];
+    }
+
+    const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+    let channelsConfig = {};
+    if (existsSync(configFile)) {
+      try {
+        const raw = JSON.parse(readFileSync(configFile, 'utf-8'));
+        channelsConfig = raw?.channels && typeof raw.channels === 'object' ? raw.channels : {};
+      } catch {
+        channelsConfig = {};
+      }
+    }
+
+    return res.send(getDashboardPageHTML({
+      userEmail: req.user?.email,
+      instance: instances[0] || null,
+      channelGroups: CHANNEL_GROUPS,
+      channelsConfig,
+    }));
   } catch (err) {
-    return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: err.message || 'Failed to load dashboard' }));
+    return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instance: null, channelGroups: CHANNEL_GROUPS, channelsConfig: {}, error: err.message || 'Failed to load dashboard' }));
   }
+});
+
+app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
+  const channelName = (req.params.name || '').toString();
+  const channelDef = CHANNEL_GROUPS.find(c => c.name === channelName);
+  if (!channelDef) {
+    return res.status(404).send('Unknown channel');
+  }
+
+  const enabled = req.body?.enabled === 'true' || req.body?.enabled === 'on';
+  const fields = {};
+  for (const f of channelDef.fields || []) {
+    const v = req.body?.[f.id];
+    if (v == null) continue;
+    fields[f.id] = String(v);
+  }
+
+  try {
+    const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+    if (!existsSync(configFile)) {
+      return res.status(400).send(getDashboardPageHTML({
+        userEmail: req.user?.email,
+        instance: null,
+        channelGroups: CHANNEL_GROUPS,
+        channelsConfig: {},
+        error: 'OpenClaw is not configured yet. Set LLM Gateway env vars and restart to auto-bootstrap.',
+      }));
+    }
+
+    // Install plugin if required and enabling
+    if (enabled) {
+      const plugin = getRequiredPlugin(channelName);
+      if (plugin) {
+        await runCmd('plugins', ['install', plugin]);
+      }
+    }
+
+    const channelConfig = buildChannelConfig(channelName, fields);
+    channelConfig.enabled = enabled;
+    const setResult = await runCmd('config', [
+      'set', '--json',
+      `channels.${channelName}`,
+      JSON.stringify(channelConfig),
+    ]);
+    if (setResult.code !== 0) {
+      throw new Error((setResult.stderr || setResult.stdout || 'Failed to update channel').trim());
+    }
+
+    // Ensure gateway is up so config takes effect immediately
+    if (!isGatewayRunning()) {
+      await startGateway();
+    }
+
+    return res.redirect('/dashboard#tab=channels');
+  } catch (err) {
+    try {
+      const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+      const { data } = await supabase
+        .from('instances')
+        .select('id,name,status,public_url,created_at')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false });
+      const instance = (data && data[0]) ? data[0] : null;
+
+      const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+      let channelsConfig = {};
+      if (existsSync(configFile)) {
+        try {
+          const raw = JSON.parse(readFileSync(configFile, 'utf-8'));
+          channelsConfig = raw?.channels && typeof raw.channels === 'object' ? raw.channels : {};
+        } catch { channelsConfig = {}; }
+      }
+
+      return res.status(500).send(getDashboardPageHTML({
+        userEmail: req.user?.email,
+        instance,
+        channelGroups: CHANNEL_GROUPS,
+        channelsConfig,
+        error: err.message || 'Failed to update channel',
+      }));
+    } catch {
+      return res.status(500).send('Failed to update channel');
+    }
+  }
+});
+
+app.get('/dashboard/connectors', requireUser(), async (req, res) => {
+  // Implemented in SaaS mode: server-side only (no secrets in browser).
+  const apiKey = process.env.COMPOSIO_API_KEY || '';
+  let apps = [];
+  let configured = false;
+
+  if (apiKey) {
+    try {
+      apps = await listComposioApps({ apiKey, limit: 120 });
+      configured = true;
+    } catch (err) {
+      return res.status(502).json({ error: err.message || 'Failed to fetch Composio apps' });
+    }
+  }
+
+  const googleSuper = pickAppByCandidates(apps, ['google_super', 'google-super', 'google super', 'google', 'g-suite', 'gsuite']);
+  const github = pickAppByCandidates(apps, ['github']);
+  const slack = pickAppByCandidates(apps, ['slack']);
+
+  // Web Search is built-in for this app; Composio is optional.
+  const connectors = [
+    {
+      key: googleSuper?.key || 'google_super',
+      name: 'Google Super',
+      description: googleSuper?.description || 'Google Super App combines all Google services including Gmail, Drive, Calendar, and more.',
+      provider: 'composio',
+      badges: { connected: false, recommended: true },
+      accounts: [],
+    },
+    {
+      key: github?.key || 'github',
+      name: 'GitHub',
+      description: github?.description || 'Source control, issues, pull requests, and workflows.',
+      provider: 'composio',
+      badges: { connected: false, recommended: false },
+      accounts: [],
+    },
+    {
+      key: 'web_search',
+      name: 'Web Search',
+      description: 'Brave Search (built-in). Optionally use Perplexity via server configuration.',
+      provider: 'builtin',
+      badges: { active: true, connected: true, recommended: false },
+      accounts: [],
+    },
+    {
+      key: slack?.key || 'slack',
+      name: 'Slack',
+      description: slack?.description || 'Send messages, manage channels, and automate workflows.',
+      provider: 'composio',
+      badges: { connected: false, recommended: true },
+      accounts: [],
+    },
+  ];
+
+  return res.json({ connectors, configured });
+});
+
+// Connector actions (UI endpoints). These are intentionally server-side.
+// Future work: implement Composio OAuth/account linking and persist account state.
+app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) => {
+  return res.status(501).json({
+    error: 'Connector linking not implemented yet.',
+    hint: 'UI is ready. Next step is adding Composio auth flow + persistence.',
+  });
+});
+
+app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res) => {
+  return res.status(501).json({
+    error: 'Connector reconnect not implemented yet.',
+  });
+});
+
+app.post('/dashboard/connectors/:key/disconnect', requireUser(), async (req, res) => {
+  return res.status(501).json({
+    error: 'Connector disconnect not implemented yet.',
+  });
 });
 
 app.get('/api/instances', requireUser(), async (req, res) => {
@@ -501,52 +835,18 @@ app.get('/api/instances', requireUser(), async (req, res) => {
     const { data, error } = await supabase
       .from('instances')
       .select('id,name,status,public_url,created_at,updated_at')
+      .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
-    return res.json({ instances: data || [] });
+    const instances = data || [];
+    return res.json({ instance: instances[0] || null });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Failed to list instances' });
   }
 });
 
 app.post('/api/instances', requireUser(), async (req, res) => {
-  const name = (req.body?.name || '').trim();
-  if (!name || name.length > 80) {
-    const msg = 'Instance name is required (1-80 chars).';
-    const acceptsHtml = (req.headers.accept || '').includes('text/html');
-    if (acceptsHtml) {
-      return res.status(400).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: msg }));
-    }
-    return res.status(400).json({ error: msg });
-  }
-
-  try {
-    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-    const { data, error } = await supabase
-      .from('instances')
-      .insert({ user_id: req.user.id, name })
-      .select('id,name,status,public_url,created_at')
-      .single();
-    if (error) {
-      const acceptsHtml = (req.headers.accept || '').includes('text/html');
-      if (acceptsHtml) {
-        return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: error.message }));
-      }
-      return res.status(500).json({ error: error.message });
-    }
-
-    const acceptsHtml = (req.headers.accept || '').includes('text/html');
-    if (acceptsHtml) {
-      return res.redirect('/dashboard');
-    }
-    return res.json({ instance: data });
-  } catch (err) {
-    const acceptsHtml = (req.headers.accept || '').includes('text/html');
-    if (acceptsHtml) {
-      return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: err.message || 'Failed to create instance' }));
-    }
-    return res.status(500).json({ error: err.message || 'Failed to create instance' });
-  }
+  return res.status(405).json({ error: 'Instance creation is disabled (one instance per user).' });
 });
 
 app.post('/api/instances/:id/publish', requireUser(), async (req, res) => {
@@ -643,79 +943,72 @@ app.get('/console/:id', async (req, res) => {
   }
 });
 
-// Login page - no authentication required
-app.get('/login', (req, res) => {
-  const redirect = req.query.redirect || '/onboard';
-  // If already authenticated (cookie), redirect immediately
-  if (req.cookies?.openclaw_auth === SETUP_PASSWORD) {
-    return res.redirect(redirect);
-  }
-  res.send(getLoginPageHTML({ redirect }));
+// Legacy alias: /login previously handled setup-password auth.
+// We now use Supabase auth at /auth.
+app.all('/login', (req, res) => {
+  const redirectTo = encodeURIComponent(req.query.redirect || '/onboard');
+  return res.redirect(`/auth?redirect=${redirectTo}`);
 });
 
-app.post('/login', (req, res) => {
-  const { password } = req.body;
-  const redirect = req.body.redirect || req.query.redirect || '/onboard';
-  if (password === SETUP_PASSWORD) {
+function hasValidSetupPassword(req, res, password) {
+  if (!password) return false;
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const [type, token] = authHeader.split(' ');
+    if (type === 'Bearer' && token === password) return true;
+  }
+  if (req.query.password === password) {
+    // Mirror legacy behavior: set cookie for subsequent requests
     res.cookie('openclaw_auth', password, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      maxAge: 24 * 60 * 60 * 1000,
     });
-    return res.redirect(redirect);
+    return true;
   }
-  // Wrong password - re-render login with error
-  res.status(401).send(getLoginPageHTML({ redirect, error: 'Invalid password' }));
-});
+  if (req.cookies && req.cookies.openclaw_auth === password) return true;
+  return false;
+}
 
-// Setup authentication middleware
-const authMiddleware = createAuthMiddleware(SETUP_PASSWORD);
+// Wrapper pages are protected by Supabase auth (/auth) OR optional legacy setup password.
+const wrapperAuth = (req, res, next) => {
+  const pw = (process.env.SETUP_PASSWORD || '').toString();
+  if (pw && hasValidSetupPassword(req, res, pw)) return next();
+  return requireUser()(req, res, next);
+};
 
 // Setup wizard routes - main page with web terminal and status
 // Handle both GET and POST (POST comes from login form)
 const setupHandler = (req, res) => {
-  const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
-  const isConfigured = existsSync(configFile);
-  const gatewayInfo = getGatewayInfo();
-  const password = req.query.password || req.body?.password || req.cookies?.openclaw_auth || '';
-
-  res.send(getSetupPageHTML({
-    isConfigured,
-    gatewayInfo,
-    password,
-    stateDir: OPENCLAW_STATE_DIR,
-    gatewayToken: getGatewayToken(),
-    authGroups: AUTH_GROUPS,
-    channelGroups: CHANNEL_GROUPS
-  }));
+  return res.redirect('/dashboard');
 };
 
-app.get('/onboard', authMiddleware, setupHandler);
-app.post('/onboard', authMiddleware, setupHandler);
+app.get('/onboard', wrapperAuth, setupHandler);
+app.post('/onboard', wrapperAuth, setupHandler);
 
 // Start gateway
-app.post('/onboard/start', authMiddleware, async (req, res) => {
+app.post('/onboard/start', wrapperAuth, async (req, res) => {
   try {
     await startGateway();
-    res.redirect(`/onboard?password=${req.query.password || req.body.password || ''}`);
+    res.redirect('/onboard');
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // Stop gateway
-app.post('/onboard/stop', authMiddleware, async (req, res) => {
+app.post('/onboard/stop', wrapperAuth, async (req, res) => {
   try {
     await stopGateway();
-    res.redirect(`/onboard?password=${req.query.password || req.body.password || ''}`);
+    res.redirect('/onboard');
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // Export backup
-app.get('/onboard/export', authMiddleware, (req, res) => {
+app.get('/onboard/export', wrapperAuth, (req, res) => {
   const archive = archiver('tar', { gzip: true });
 
   res.attachment('openclaw-backup.tar.gz');
@@ -730,7 +1023,7 @@ app.get('/onboard/export', authMiddleware, (req, res) => {
 });
 
 // Get config
-app.get('/onboard/config', authMiddleware, (req, res) => {
+app.get('/onboard/config', wrapperAuth, (req, res) => {
   const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
   if (existsSync(configFile)) {
     try {
@@ -745,7 +1038,7 @@ app.get('/onboard/config', authMiddleware, (req, res) => {
 });
 
 // Save config
-app.post('/onboard/config', authMiddleware, (req, res) => {
+app.post('/onboard/config', wrapperAuth, (req, res) => {
   try {
     const config = req.body;
 
@@ -769,7 +1062,7 @@ app.post('/onboard/config', authMiddleware, (req, res) => {
 // --- Simple Mode API endpoints ---
 
 // Status endpoint
-app.get('/onboard/api/status', authMiddleware, (req, res) => {
+app.get('/onboard/api/status', wrapperAuth, (req, res) => {
   const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
   res.json({
     configured: existsSync(configFile),
@@ -779,7 +1072,7 @@ app.get('/onboard/api/status', authMiddleware, (req, res) => {
 });
 
 // Proxy Build with Claude skills list (avoids browser CORS issues)
-app.get('/onboard/api/bwc-skills', authMiddleware, async (req, res) => {
+app.get('/onboard/api/bwc-skills', wrapperAuth, async (req, res) => {
   try {
     const response = await fetch('https://buildwithclaude.com/api/plugins/list?type=skill&limit=100');
     if (!response.ok) {
@@ -793,7 +1086,7 @@ app.get('/onboard/api/bwc-skills', authMiddleware, async (req, res) => {
 });
 
 // Run setup (simple mode)
-app.post('/onboard/api/run', authMiddleware, async (req, res) => {
+app.post('/onboard/api/run', wrapperAuth, async (req, res) => {
   try {
     const { authChoice, authSecret, extraFieldValues, flow, channels: channelPayload, skills } = req.body;
     const logs = [];
@@ -1048,7 +1341,7 @@ app.post('/onboard/api/run', authMiddleware, async (req, res) => {
 });
 
 // Reset configuration
-app.post('/onboard/api/reset', authMiddleware, async (req, res) => {
+app.post('/onboard/api/reset', wrapperAuth, async (req, res) => {
   try {
     if (isGatewayRunning()) {
       await stopGateway();
@@ -1061,7 +1354,7 @@ app.post('/onboard/api/reset', authMiddleware, async (req, res) => {
 });
 
 // Diagnostic endpoint: run CLI commands for troubleshooting
-app.get('/onboard/api/diag', authMiddleware, async (req, res) => {
+app.get('/onboard/api/diag', wrapperAuth, async (req, res) => {
   try {
     const results = {};
     const commands = [
@@ -1117,11 +1410,11 @@ const uiHandler = (req, res) => {
   }));
 };
 
-app.get('/lite', authMiddleware, uiHandler);
-app.post('/lite', authMiddleware, uiHandler);
+app.get('/lite', wrapperAuth, uiHandler);
+app.post('/lite', wrapperAuth, uiHandler);
 
 // Lite API: Status
-app.get('/lite/api/status', authMiddleware, (req, res) => {
+app.get('/lite/api/status', wrapperAuth, (req, res) => {
   const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
   const isConfigured = existsSync(configFile);
   const gatewayInfo = getGatewayInfo();
@@ -1154,13 +1447,13 @@ app.get('/lite/api/status', authMiddleware, (req, res) => {
 });
 
 // Lite API: Logs
-app.get('/lite/api/logs', authMiddleware, (req, res) => {
+app.get('/lite/api/logs', wrapperAuth, (req, res) => {
   const sinceId = parseInt(req.query.since, 10) || 0;
   res.json(getRecentLogs(sinceId));
 });
 
 // Lite API: Gateway start
-app.post('/lite/api/gateway/start', authMiddleware, async (req, res) => {
+app.post('/lite/api/gateway/start', wrapperAuth, async (req, res) => {
   try {
     await startGateway();
     res.json({ success: true });
@@ -1170,7 +1463,7 @@ app.post('/lite/api/gateway/start', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Gateway stop
-app.post('/lite/api/gateway/stop', authMiddleware, async (req, res) => {
+app.post('/lite/api/gateway/stop', wrapperAuth, async (req, res) => {
   try {
     await stopGateway();
     res.json({ success: true });
@@ -1180,7 +1473,7 @@ app.post('/lite/api/gateway/stop', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Gateway restart
-app.post('/lite/api/gateway/restart', authMiddleware, async (req, res) => {
+app.post('/lite/api/gateway/restart', wrapperAuth, async (req, res) => {
   try {
     if (isGatewayRunning()) {
       await stopGateway();
@@ -1193,7 +1486,7 @@ app.post('/lite/api/gateway/restart', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Pairing approval
-app.post('/lite/api/pairing/approve', authMiddleware, async (req, res) => {
+app.post('/lite/api/pairing/approve', wrapperAuth, async (req, res) => {
   try {
     const { channel, code } = req.body;
     if (!channel || !code) {
@@ -1218,7 +1511,7 @@ app.post('/lite/api/pairing/approve', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Get config
-app.get('/lite/api/config', authMiddleware, (req, res) => {
+app.get('/lite/api/config', wrapperAuth, (req, res) => {
   const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
   if (existsSync(configFile)) {
     try {
@@ -1233,7 +1526,7 @@ app.get('/lite/api/config', authMiddleware, (req, res) => {
 });
 
 // Lite API: Save config
-app.post('/lite/api/config', authMiddleware, (req, res) => {
+app.post('/lite/api/config', wrapperAuth, (req, res) => {
   try {
     const config = req.body;
 
@@ -1255,7 +1548,7 @@ app.post('/lite/api/config', authMiddleware, (req, res) => {
 });
 
 // Lite API: Quick stats (skills count + sessions count)
-app.get('/lite/api/stats', authMiddleware, async (req, res) => {
+app.get('/lite/api/stats', wrapperAuth, async (req, res) => {
   let skillsCount = null;
   const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
   if (existsSync(configFile)) {
@@ -1300,7 +1593,7 @@ app.get('/lite/api/stats', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Daily token usage (via gateway WebSocket RPC)
-app.get('/lite/api/usage', authMiddleware, async (req, res) => {
+app.get('/lite/api/usage', wrapperAuth, async (req, res) => {
   const endDate = new Date().toISOString().split('T')[0];
   const startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
@@ -1359,7 +1652,7 @@ app.get('/lite/api/usage', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Memory status
-app.get('/lite/api/memory', authMiddleware, async (req, res) => {
+app.get('/lite/api/memory', wrapperAuth, async (req, res) => {
   try {
     const result = await runCmd('memory', ['status', '--json']);
     if (result.code !== 0) {
@@ -1421,7 +1714,7 @@ app.get('/lite/api/memory', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Memory search
-app.get('/lite/api/memory/search', authMiddleware, async (req, res) => {
+app.get('/lite/api/memory/search', wrapperAuth, async (req, res) => {
   const q = req.query.q;
   if (!q || q.length < 2) {
     return res.status(400).json({ error: 'Query must be at least 2 characters' });
@@ -1478,7 +1771,7 @@ app.get('/lite/api/memory/search', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Memory re-index
-app.post('/lite/api/memory/index', authMiddleware, async (req, res) => {
+app.post('/lite/api/memory/index', wrapperAuth, async (req, res) => {
   try {
     const result = await runCmd('memory', ['index']);
     const output = result.stdout.trim() || result.stderr.trim() || '';
@@ -1489,7 +1782,7 @@ app.post('/lite/api/memory/index', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Scheduled tasks (cron)
-app.get('/lite/api/cron', authMiddleware, async (req, res) => {
+app.get('/lite/api/cron', wrapperAuth, async (req, res) => {
   try {
     const result = await runCmd('cron', ['list', '--json']);
     if (result.code !== 0) {
@@ -1507,7 +1800,7 @@ app.get('/lite/api/cron', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Security audit (config checks and optional live probing)
-app.post('/lite/api/security-audit', authMiddleware, express.json(), async (req, res) => {
+app.post('/lite/api/security-audit', wrapperAuth, express.json(), async (req, res) => {
   function withTimeout(promise, ms) {
     return Promise.race([
       promise,
@@ -1543,7 +1836,7 @@ app.post('/lite/api/security-audit', authMiddleware, express.json(), async (req,
 });
 
 // Lite API: Version check
-app.get('/lite/api/version', authMiddleware, async (req, res) => {
+app.get('/lite/api/version', wrapperAuth, async (req, res) => {
   const steps = [];
   let current = null;
   let latest = null;
@@ -1608,7 +1901,7 @@ app.get('/lite/api/version', authMiddleware, async (req, res) => {
 });
 
 // Lite API: Restore from backup
-app.post('/lite/api/restore', authMiddleware, express.raw({ type: 'application/octet-stream', limit: '500mb' }), async (req, res) => {
+app.post('/lite/api/restore', wrapperAuth, express.raw({ type: 'application/octet-stream', limit: '500mb' }), async (req, res) => {
   const steps = [];
   let autoBackupPath = null;
 
@@ -1700,7 +1993,7 @@ app.post('/lite/api/restore', authMiddleware, express.raw({ type: 'application/o
 });
 
 // Lite API: Upgrade OpenClaw
-app.post('/lite/api/upgrade', authMiddleware, async (req, res) => {
+app.post('/lite/api/upgrade', wrapperAuth, async (req, res) => {
   const steps = [];
   let autoBackupPath = null;
   // Accept version from body: { version: "2026.2.21" } or { version: "base" } or omit for latest
@@ -1827,7 +2120,7 @@ app.post('/lite/api/upgrade', authMiddleware, async (req, res) => {
 });
 
 // API: Serve schemas + form metadata for client-side validation and form generation
-app.get('/api/schemas', authMiddleware, (req, res) => {
+app.get('/api/schemas', wrapperAuth, (req, res) => {
   res.json(getAllSchemas());
 });
 
@@ -1835,7 +2128,7 @@ app.get('/api/schemas', authMiddleware, (req, res) => {
 const { middleware: proxyMiddleware, upgradeHandler } = createProxy(getGatewayToken);
 
 // Protect all /openclaw paths (SPA, assets, API) with setup password
-app.use('/openclaw', authMiddleware);
+app.use('/openclaw', wrapperAuth);
 
 // Redirect /openclaw (and subpaths on refresh) to include gateway token so the SPA can authenticate.
 // v2026.3.13+ reads the token from URL fragment (#token=xxx), not query params.
@@ -1854,7 +2147,7 @@ const openclawHandler = (req, res, next) => {
   if (!isGatewayRunning()) {
     return res.status(503).json({
       error: 'Service Unavailable',
-      message: 'OpenClaw gateway is not running. Visit /onboard to start it.'
+      message: 'OpenClaw gateway is not running. Visit /dashboard to configure and start it.'
     });
   }
   const token = getGatewayToken();
@@ -1876,7 +2169,7 @@ app.use((req, res, next) => {
   if (!isGatewayRunning()) {
     return res.status(503).json({
       error: 'Service Unavailable',
-      message: 'OpenClaw gateway is not running. Visit /onboard to start it.'
+      message: 'OpenClaw gateway is not running. Visit /dashboard to configure and start it.'
     });
   }
   proxyMiddleware(req, res);
@@ -1885,8 +2178,8 @@ app.use((req, res, next) => {
 // Create HTTP server
 const server = createServer(app);
 
-// Initialize terminal WebSocket server (handles /onboard/ws endpoint)
-createTerminalServer(server, SETUP_PASSWORD);
+// Initialize terminal WebSocket server (handles /onboard/ws and /lite/ws)
+createTerminalServer(server);
 
 // Handle WebSocket upgrades for gateway proxy
 // Note: Terminal WebSocket upgrades are handled by createTerminalServer
@@ -1936,7 +2229,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // Start server
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`OpenClaw wrapper server listening on port ${PORT}`);
-  console.log(`Setup wizard: http://localhost:${PORT}/onboard`);
+  console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
   console.log(`Lite panel: http://localhost:${PORT}/lite`);
   console.log(`Health check: http://localhost:${PORT}/health`);
 
@@ -1948,6 +2241,19 @@ server.listen(PORT, '0.0.0.0', () => {
       console.error('Failed to auto-start gateway:', err.message);
     });
   } else {
-    console.log('No configuration found. Visit /onboard to configure OpenClaw.');
+    ensureOpenClawConfigFromEnv()
+      .then((boot) => {
+        if (boot.configured && boot.created) {
+          console.log('Bootstrapped configuration for SaaS, auto-starting gateway...');
+          startGateway().catch(err => {
+            console.error('Failed to auto-start gateway:', err.message);
+          });
+        } else {
+          console.log('No configuration found. Provide LLM Gateway config (env or Supabase app_settings), then visit /dashboard.');
+        }
+      })
+      .catch(() => {
+        console.log('No configuration found. Provide LLM Gateway config (env or Supabase app_settings), then visit /dashboard.');
+      });
   }
 });
