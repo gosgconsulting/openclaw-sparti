@@ -15,16 +15,38 @@ function formatDate(iso) {
   }
 }
 
+function getTokenFromPublicUrl(publicUrl) {
+  if (!publicUrl) return null;
+  try {
+    const u = new URL(publicUrl);
+    return u.searchParams.get('token');
+  } catch {
+    return null;
+  }
+}
+
 export function getDashboardPageHTML({ userEmail, instances, error } = {}) {
   const errHtml = error ? `<div class="error">${escapeHtml(error)}</div>` : '';
   const rows = (instances || [])
     .map(i => {
+      const token = getTokenFromPublicUrl(i.public_url);
+      const consoleUrl = token ? `/console/${encodeURIComponent(i.id)}?token=${encodeURIComponent(token)}` : null;
+      const publishForm = `<form method="POST" action="/api/instances/${encodeURIComponent(i.id)}/publish" onsubmit="return confirm('Publish this instance and generate a public URL?');" style="margin:0;">
+        <button class="btn small primary" type="submit">Publish</button>
+      </form>`;
+      const actions = (i.status !== 'published' || !i.public_url)
+        ? publishForm
+        : `<div class="actions">
+            <a class="btn small" href="${escapeHtml(i.public_url)}" target="_blank" rel="noreferrer">Open URL</a>
+            ${consoleUrl ? `<a class="btn small" href="${escapeHtml(consoleUrl)}" target="_blank" rel="noreferrer">Open Console</a>` : ''}
+          </div>`;
       return `<tr>
         <td class="mono">${escapeHtml(i.id)}</td>
         <td>${escapeHtml(i.name)}</td>
         <td><span class="pill">${escapeHtml(i.status)}</span></td>
         <td class="muted">${i.public_url ? `<a href="${escapeHtml(i.public_url)}" target="_blank" rel="noreferrer">${escapeHtml(i.public_url)}</a>` : '-'}</td>
         <td class="muted">${escapeHtml(formatDate(i.created_at))}</td>
+        <td>${actions}</td>
       </tr>`;
     })
     .join('');
@@ -113,6 +135,28 @@ export function getDashboardPageHTML({ userEmail, instances, error } = {}) {
       font-weight: 900;
       cursor: pointer;
     }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(15,17,23,0.35);
+      color: #e4e4e7;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .btn:hover { text-decoration: none; border-color: rgba(0,229,204,0.35); }
+    .btn.small { padding: 8px 10px; font-size: 12px; border-radius: 999px; }
+    .btn.primary {
+      border: 0;
+      background: linear-gradient(135deg, #00e5cc, #0ea5e9);
+      color: #051018;
+    }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,0.07); vertical-align: top; }
     th { text-align: left; font-size: 12px; color: #a1a1aa; font-weight: 700; }
@@ -172,6 +216,7 @@ export function getDashboardPageHTML({ userEmail, instances, error } = {}) {
                 <th>Status</th>
                 <th>URL</th>
                 <th>Created</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>

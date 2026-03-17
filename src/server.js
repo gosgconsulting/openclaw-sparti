@@ -16,6 +16,7 @@ import { createServer } from 'http';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, createWriteStream, readdirSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
 import JSZip from 'jszip';
 import archiver from 'archiver';
 import { siAnthropic, siGooglegemini, siOpenrouter, siVercel, siCloudflare, siOllama } from 'simple-icons';
@@ -33,6 +34,7 @@ import { getUIPageHTML } from './ui-page.js';
 import { getLoginPageHTML } from './login-page.js';
 import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
+import { getInstanceConsolePageHTML } from './console-page.js';
 import { createSupabaseClient } from './supabase.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
 
@@ -357,6 +359,16 @@ async function installClawHubSkill(slug, skillsDir) {
 
 // Create Express app
 const app = express();
+// Trust proxy so req.protocol/req.ip are correct behind Railway/ingress.
+app.set('trust proxy', 1);
+
+function getRequestOrigin(req) {
+  const xfProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0].trim();
+  const xfHost = (req.headers['x-forwarded-host'] || '').toString().split(',')[0].trim();
+  const proto = xfProto || req.protocol || 'http';
+  const host = xfHost || req.headers.host;
+  return `${proto}://${host}`;
+}
 
 // Parse JSON and URL-encoded bodies
 app.use(express.json());
@@ -534,6 +546,100 @@ app.post('/api/instances', requireUser(), async (req, res) => {
       return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: err.message || 'Failed to create instance' }));
     }
     return res.status(500).json({ error: err.message || 'Failed to create instance' });
+  }
+});
+
+app.post('/api/instances/:id/publish', requireUser(), async (req, res) => {
+  const instanceId = req.params.id;
+  const acceptsHtml = (req.headers.accept || '').includes('text/html');
+
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const origin = getRequestOrigin(req);
+
+    // Generate token (retry a few times for rare unique collisions)
+    let token = '';
+    let lastError = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      token = randomBytes(24).toString('hex');
+      const publicUrl = `${origin}/i/${encodeURIComponent(instanceId)}?token=${encodeURIComponent(token)}`;
+
+      const { data, error } = await supabase
+        .from('instances')
+        .update({ status: 'published', public_url: publicUrl, access_token: token })
+        .eq('id', instanceId)
+        .eq('user_id', req.user.id)
+        .select('id,name,status,public_url,created_at')
+        .single();
+
+      if (!error && data) {
+        if (acceptsHtml) return res.redirect('/dashboard');
+        return res.json({ instance: data });
+      }
+
+      lastError = error || new Error('Failed to publish');
+    }
+
+    if (acceptsHtml) {
+      return res.status(500).send(
+        getDashboardPageHTML({
+          userEmail: req.user?.email,
+          instances: [],
+          error: lastError?.message || 'Failed to publish instance',
+        })
+      );
+    }
+    return res.status(500).json({ error: lastError?.message || 'Failed to publish instance' });
+  } catch (err) {
+    if (acceptsHtml) {
+      return res.status(500).send(
+        getDashboardPageHTML({
+          userEmail: req.user?.email,
+          instances: [],
+          error: err.message || 'Failed to publish instance',
+        })
+      );
+    }
+    return res.status(500).json({ error: err.message || 'Failed to publish instance' });
+  }
+});
+
+app.get('/i/:id', async (req, res) => {
+  const instanceId = req.params.id;
+  const token = (req.query.token || '').toString();
+  if (!token) return res.status(401).send('Missing token');
+
+  try {
+    const supabase = createSupabaseClient();
+    const { data, error } = await supabase.rpc('get_instance_public', { p_id: instanceId, p_token: token });
+    const instance = Array.isArray(data) ? data[0] : null;
+    if (error || !instance) return res.status(401).send('Invalid token');
+    return res.redirect(`/console/${encodeURIComponent(instanceId)}?token=${encodeURIComponent(token)}`);
+  } catch {
+    return res.status(500).send('Failed to load instance');
+  }
+});
+
+app.get('/console/:id', async (req, res) => {
+  const instanceId = req.params.id;
+  const token = (req.query.token || '').toString();
+  if (!token) return res.status(401).send(getInstanceConsolePageHTML({ error: 'Missing token' }));
+
+  try {
+    const supabase = createSupabaseClient();
+    const { data, error } = await supabase.rpc('get_instance_public', { p_id: instanceId, p_token: token });
+    const instance = Array.isArray(data) ? data[0] : null;
+    if (error || !instance) {
+      return res.status(401).send(getInstanceConsolePageHTML({ error: 'Invalid token' }));
+    }
+
+    const origin = getRequestOrigin(req);
+    const consoleUrl = `${origin}/console/${encodeURIComponent(instanceId)}?token=${encodeURIComponent(token)}`;
+    // Admin console is the existing wrapper control panel (setup-password gated).
+    const adminUrl = `${origin}/lite`;
+    return res.send(getInstanceConsolePageHTML({ instance, consoleUrl, adminUrl }));
+  } catch (err) {
+    return res.status(500).send(getInstanceConsolePageHTML({ error: err.message || 'Failed to load console' }));
   }
 });
 
