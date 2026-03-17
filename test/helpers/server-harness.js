@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,7 +36,7 @@ export async function startServer() {
     OPENCLAW_WORKSPACE_DIR: join(stateDir, 'workspace'),
     HOME: homeDir,
     // Prepend mock/ so `openclaw` resolves to our mock script
-    PATH: `${mockDir}:${process.env.PATH}`,
+    PATH: `${mockDir}${delimiter}${process.env.PATH}`,
   };
 
   const child = spawn('node', [join(PROJECT_ROOT, 'src', 'server.js')], {

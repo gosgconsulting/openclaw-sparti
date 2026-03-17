@@ -17,6 +17,18 @@ let isStarting = false;
 let daemonAdopted = false;  // True when the gateway daemon outlives the CLI process
 let daemonPollTimer = null; // Health-poll interval when in adopted mode
 
+function spawnOpenclaw(args, options) {
+  // On Windows, .cmd/.bat shims require cmd.exe unless shell=true.
+  // Using cmd.exe keeps test mocks working cross-platform.
+  if (process.platform === 'win32') {
+    return spawn('cmd.exe', ['/d', '/s', '/c', 'openclaw', ...args], {
+      ...options,
+      shell: false,
+    });
+  }
+  return spawn('openclaw', args, options);
+}
+
 // Log buffering for UI panel
 const LOG_BUFFER_MAX = 1000;
 let logBuffer = [];
@@ -511,7 +523,7 @@ export async function startGateway() {
 
   // Start the gateway
   // Using: openclaw gateway --port PORT --verbose
-  gatewayProcess = spawn('openclaw', [
+  gatewayProcess = spawnOpenclaw([
     'gateway', 'run',
     '--bind', 'loopback',
     '--port', port,
@@ -636,7 +648,7 @@ async function runOnboard() {
   const workspaceDir = process.env.OPENCLAW_WORKSPACE_DIR || '/data/workspace';
 
   return new Promise((resolve, reject) => {
-    const onboard = spawn('openclaw', ['onboard', '--non-interactive', '--accept-risk'], {
+    const onboard = spawnOpenclaw(['onboard', '--non-interactive', '--accept-risk'], {
       env: {
         ...process.env,
         HOME: '/home/openclaw',
@@ -680,7 +692,7 @@ export function runCmd(command, args = [], extraEnv = {}) {
     let stdout = '';
     let stderr = '';
 
-    const child = spawn('openclaw', [command, ...args], {
+    const child = spawnOpenclaw([command, ...args], {
       env: {
         ...process.env,
         HOME: '/home/openclaw',

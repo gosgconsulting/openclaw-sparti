@@ -31,6 +31,10 @@ import { createTerminalServer, closeAllSessions } from './terminal.js';
 import { getSetupPageHTML } from './onboard-page.js';
 import { getUIPageHTML } from './ui-page.js';
 import { getLoginPageHTML } from './login-page.js';
+import { getAuthPageHTML } from './auth-page.js';
+import { getDashboardPageHTML } from './dashboard-page.js';
+import { createSupabaseClient } from './supabase.js';
+import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
 
 // Configuration
 const PORT = process.env.PORT || 8080;
@@ -374,6 +378,135 @@ app.use((req, res, next) => {
 
 // Health check endpoints - no authentication required
 app.use('/health', healthRouter);
+
+// --- Supabase auth + dashboard ---
+app.get('/auth', (req, res) => {
+  const redirect = req.query.redirect || '/dashboard';
+  const mode = req.query.mode === 'signup' ? 'signup' : 'login';
+  res.send(getAuthPageHTML({ redirect, mode }));
+});
+
+app.post('/auth/login', async (req, res) => {
+  const redirect = req.body.redirect || req.query.redirect || '/dashboard';
+  const email = (req.body.email || '').trim();
+  const password = req.body.password || '';
+
+  try {
+    const supabase = createSupabaseClient();
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data?.session) {
+      return res.status(401).send(getAuthPageHTML({ redirect, error: error?.message || 'Login failed' }));
+    }
+    setSupabaseAuthCookies(res, data.session);
+    return res.redirect(redirect);
+  } catch (err) {
+    return res.status(500).send(getAuthPageHTML({ redirect, error: err.message || 'Login failed' }));
+  }
+});
+
+app.post('/auth/signup', async (req, res) => {
+  const redirect = req.body.redirect || req.query.redirect || '/dashboard';
+  const email = (req.body.email || '').trim();
+  const password = req.body.password || '';
+
+  try {
+    const supabase = createSupabaseClient();
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      return res.status(400).send(getAuthPageHTML({ redirect, mode: 'signup', error: error.message }));
+    }
+    // If email confirmations are disabled, session may be present immediately.
+    if (data?.session) {
+      setSupabaseAuthCookies(res, data.session);
+      return res.redirect(redirect);
+    }
+    return res.send(
+      getAuthPageHTML({
+        redirect,
+        error: 'Account created. Please check your email to confirm, then sign in.',
+      })
+    );
+  } catch (err) {
+    return res.status(500).send(getAuthPageHTML({ redirect, mode: 'signup', error: err.message || 'Signup failed' }));
+  }
+});
+
+app.post('/auth/logout', (req, res) => {
+  clearSupabaseAuthCookies(res);
+  res.redirect('/auth');
+});
+
+app.get('/dashboard', requireUser(), async (req, res) => {
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { data, error } = await supabase
+      .from('instances')
+      .select('id,name,status,public_url,created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: error.message }));
+    }
+
+    return res.send(getDashboardPageHTML({ userEmail: req.user?.email, instances: data || [] }));
+  } catch (err) {
+    return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: err.message || 'Failed to load dashboard' }));
+  }
+});
+
+app.get('/api/instances', requireUser(), async (req, res) => {
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { data, error } = await supabase
+      .from('instances')
+      .select('id,name,status,public_url,created_at,updated_at')
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ instances: data || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to list instances' });
+  }
+});
+
+app.post('/api/instances', requireUser(), async (req, res) => {
+  const name = (req.body?.name || '').trim();
+  if (!name || name.length > 80) {
+    const msg = 'Instance name is required (1-80 chars).';
+    const acceptsHtml = (req.headers.accept || '').includes('text/html');
+    if (acceptsHtml) {
+      return res.status(400).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: msg }));
+    }
+    return res.status(400).json({ error: msg });
+  }
+
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { data, error } = await supabase
+      .from('instances')
+      .insert({ user_id: req.user.id, name })
+      .select('id,name,status,public_url,created_at')
+      .single();
+    if (error) {
+      const acceptsHtml = (req.headers.accept || '').includes('text/html');
+      if (acceptsHtml) {
+        return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: error.message }));
+      }
+      return res.status(500).json({ error: error.message });
+    }
+
+    const acceptsHtml = (req.headers.accept || '').includes('text/html');
+    if (acceptsHtml) {
+      return res.redirect('/dashboard');
+    }
+    return res.json({ instance: data });
+  } catch (err) {
+    const acceptsHtml = (req.headers.accept || '').includes('text/html');
+    if (acceptsHtml) {
+      return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instances: [], error: err.message || 'Failed to create instance' }));
+    }
+    return res.status(500).json({ error: err.message || 'Failed to create instance' });
+  }
+});
 
 // Login page - no authentication required
 app.get('/login', (req, res) => {
