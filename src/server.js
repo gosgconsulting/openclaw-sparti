@@ -386,6 +386,35 @@ app.get('/auth', (req, res) => {
   res.send(getAuthPageHTML({ redirect, mode }));
 });
 
+app.post('/auth/session', express.json(), async (req, res) => {
+  const redirect = (req.body?.redirect || '/dashboard');
+  const accessToken = req.body?.access_token || '';
+  const refreshToken = req.body?.refresh_token || '';
+  const expiresAt = req.body?.expires_at || null;
+
+  try {
+    if (!accessToken || !refreshToken) {
+      return res.status(400).send(getAuthPageHTML({ redirect, error: 'Missing session tokens' }));
+    }
+
+    // Validate the access token before setting cookies.
+    const supabase = createSupabaseClient({ accessToken });
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data?.user) {
+      return res.status(401).send(getAuthPageHTML({ redirect, error: 'OAuth session validation failed' }));
+    }
+
+    setSupabaseAuthCookies(res, {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_at: typeof expiresAt === 'number' ? expiresAt : undefined,
+    });
+    return res.redirect(redirect);
+  } catch (err) {
+    return res.status(500).send(getAuthPageHTML({ redirect, error: err.message || 'Failed to set session' }));
+  }
+});
+
 app.post('/auth/login', async (req, res) => {
   const redirect = req.body.redirect || req.query.redirect || '/dashboard';
   const email = (req.body.email || '').trim();

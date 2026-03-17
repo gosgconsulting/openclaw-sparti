@@ -11,6 +11,8 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
   const redirectValue = redirect || '/dashboard';
   const errorHTML = error ? `<div class="error">${escapeHtml(error)}</div>` : '';
   const isSignup = mode === 'signup';
+  const supabaseUrl = process.env.SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
 
   return `<!DOCTYPE html>
 <html>
@@ -81,6 +83,42 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
       transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
     button:hover { transform: translateY(-1px); box-shadow: 0 10px 30px rgba(255,92,92,0.18); }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 18px 0 10px;
+      color: #71717a;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      height: 1px;
+      flex: 1;
+      background: rgba(255,255,255,0.10);
+    }
+    .oauthBtn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(15,17,23,0.35);
+      color: #e4e4e7;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .oauthBtn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      border-color: rgba(0,229,204,0.35);
+    }
+    .oauthBtn svg { width: 18px; height: 18px; }
     .alt {
       margin-top: 12px;
       font-size: 13px;
@@ -111,13 +149,86 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
         <button type="submit">${isSignup ? 'Create account' : 'Sign in'}</button>
       </div>
     </form>
+    ${isSignup ? '' : `
+      <div class="divider">OR CONTINUE WITH</div>
+      <button class="oauthBtn" id="googleBtn" type="button" aria-label="Continue with Google">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.687 32.657 29.229 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.651-.389-3.917Z"/>
+          <path fill="#FF3D00" d="M6.306 14.691 12.88 19.51C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.338 6.306 14.691Z"/>
+          <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.196l-6.19-5.238C29.203 35.091 26.715 36 24 36c-5.207 0-9.652-3.318-11.281-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44Z"/>
+          <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.781 2.153-2.367 3.977-4.484 5.238h.003l6.19 5.238C36.573 39.14 44 34 44 24c0-1.341-.138-2.651-.389-3.917Z"/>
+        </svg>
+        Continue with Google
+      </button>
+    `}
     <div class="alt">
       ${isSignup
         ? `Already have an account? <a href="/auth?redirect=${encodeURIComponent(redirectValue)}">Sign in</a>`
         : `New here? <a href="/auth?mode=signup&redirect=${encodeURIComponent(redirectValue)}">Create an account</a>`}
     </div>
-    <div class="note">Uses Supabase Auth (email/password).</div>
+    <div class="note">Uses Supabase Auth.</div>
   </main>
+  <script type="module">
+    const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};
+    const SUPABASE_ANON_KEY = ${JSON.stringify(supabaseAnonKey)};
+    const REDIRECT_TO = ${JSON.stringify(redirectValue)};
+
+    const googleBtn = document.getElementById('googleBtn');
+    const canOAuth = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+    if (googleBtn && !canOAuth) {
+      googleBtn.disabled = true;
+      googleBtn.title = 'Supabase env vars missing (SUPABASE_URL / SUPABASE_ANON_KEY).';
+      googleBtn.style.opacity = '0.6';
+      googleBtn.style.cursor = 'not-allowed';
+    }
+
+    let supabase = null;
+    async function getClient() {
+      if (supabase) return supabase;
+      const mod = await import('https://esm.sh/@supabase/supabase-js@2');
+      supabase = mod.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: true }
+      });
+      return supabase;
+    }
+
+    async function maybeFinalizeOAuthSession() {
+      if (!canOAuth) return;
+      const client = await getClient();
+      const { data } = await client.auth.getSession();
+      const session = data && data.session ? data.session : null;
+      if (!session || !session.access_token || !session.refresh_token) return;
+
+      const res = await fetch('/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          expires_at: session.expires_at || null,
+          redirect: REDIRECT_TO
+        })
+      });
+      if (res.redirected) {
+        window.location.href = res.url;
+      } else if (res.ok) {
+        window.location.href = REDIRECT_TO || '/dashboard';
+      }
+    }
+
+    if (googleBtn) {
+      googleBtn.addEventListener('click', async () => {
+        if (!canOAuth) return;
+        const client = await getClient();
+        await client.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: window.location.origin + '/auth?redirect=' + encodeURIComponent(REDIRECT_TO || '/dashboard') }
+        });
+      });
+    }
+
+    maybeFinalizeOAuthSession();
+  </script>
 </body>
 </html>`;
 }
