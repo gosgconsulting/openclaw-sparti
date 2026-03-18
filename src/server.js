@@ -13,6 +13,7 @@
 
 import express from 'express';
 import { createServer } from 'http';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, createWriteStream, readdirSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -39,6 +40,7 @@ import { emitAudit } from './audit.js';
 import {
   listComposioAuthConfigs,
   generateConnectLink,
+  initiateComposioConnection,
   listComposioConnectedAccounts,
   disconnectComposioAccount,
   connectWithApiKey,
@@ -1059,6 +1061,50 @@ function resolveCallbackReturnUrl(returnTo, outcome) {
   return '/dashboard#tab=connectors' + suffix;
 }
 
+// ── Callback token (bot-initiated OAuth) ──────────────────────────────────────
+// When the bot generates a Connect Link, there's no browser session to set a
+// cookie on. Instead we embed a short-lived HMAC-signed token in the callbackUrl
+// query string so the callback can verify and identify the user without a cookie.
+//
+// Token format (base64url): <userId>:<toolkitKey>:<ts>:<hmac>
+// HMAC key: SETUP_PASSWORD (already a secret on the server)
+// TTL: 20 minutes (same as composio_cb cookie)
+
+const CB_TOKEN_TTL_MS = 20 * 60 * 1000;
+
+function makeCallbackToken(userId, toolkitKey, returnTo) {
+  const ts = Date.now();
+  const pw = (process.env.SETUP_PASSWORD || '').toString();
+  const payload = `${userId}:${toolkitKey}:${ts}`;
+  const sig = createHmac('sha256', pw).update(payload).digest('hex');
+  const token = Buffer.from(JSON.stringify({ userId, toolkitKey, ts, sig, returnTo: returnTo || null })).toString('base64url');
+  return token;
+}
+
+function verifyCallbackToken(token) {
+  try {
+    const parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    const { userId, toolkitKey, ts, sig, returnTo } = parsed;
+    if (!userId || !toolkitKey || !ts || !sig) return null;
+    if (Date.now() - ts > CB_TOKEN_TTL_MS) return null;
+    const pw = (process.env.SETUP_PASSWORD || '').toString();
+    const payload = `${userId}:${toolkitKey}:${ts}`;
+    const expected = createHmac('sha256', pw).update(payload).digest('hex');
+    // Constant-time comparison to prevent timing attacks
+    const sigBuf = Buffer.from(sig, 'hex');
+    const expBuf = Buffer.from(expected, 'hex');
+    if (sigBuf.length !== expBuf.length) return null;
+    if (!timingSafeEqual(sigBuf, expBuf)) return null;
+    return {
+      userId: String(userId),
+      toolkitKey: String(toolkitKey),
+      returnTo: typeof returnTo === 'string' ? returnTo : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) => {
   const toolkitKey = req.params.key;
   const userId = req.user.id;
@@ -1108,16 +1154,23 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
 
 // Callback from Composio after the user completes (or fails) OAuth.
 // Composio appends: ?status=success&connected_account_id=ca_xxx&toolkit=...
-// No requireUser() here — see comment above. We identify the user via the
-// composio_cb cookie set at connect-time.
+// No requireUser() here — see comment above. We identify the user via:
+//   1. composio_cb cookie (browser-initiated flow)
+//   2. cbt query param — HMAC-signed token (bot-initiated flow, no cookie available)
+//   3. Live Supabase session (last resort)
 app.get('/dashboard/connectors/callback', async (req, res) => {
-  const { status, connected_account_id, toolkit } = req.query;
+  const { status, connected_account_id, toolkit, cbt } = req.query;
 
-  // Prefer toolkit from query param (embedded in callbackUrl); fall back to cookie.
+  // Try cookie first (browser-initiated flow).
   const cbCookie = readComposioCallbackCookie(req);
+
+  // Try HMAC token from query param (bot-initiated flow).
+  const cbToken = typeof cbt === 'string' && cbt.trim() ? verifyCallbackToken(cbt.trim()) : null;
+
+  // Prefer toolkit from query param (embedded in callbackUrl); fall back to cookie/token.
   const toolkitKey = (typeof toolkit === 'string' && toolkit.trim())
     ? toolkit.trim()
-    : (cbCookie?.toolkitKey || '');
+    : (cbCookie?.toolkitKey || cbToken?.toolkitKey || '');
 
   // Clear the callback cookie regardless of outcome.
   res.clearCookie(COMPOSIO_CB_COOKIE, {
@@ -1127,14 +1180,15 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     path: '/dashboard/connectors/callback',
   });
 
-  const returnTo = cbCookie?.returnTo || null;
+  // returnTo: cookie takes priority (browser flow), then token (bot flow).
+  const returnTo = cbCookie?.returnTo || cbToken?.returnTo || null;
 
   if (status !== 'success' || !connected_account_id || !toolkitKey) {
     return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed'));
   }
 
-  // Resolve userId: prefer cookie (most reliable), fall back to live session.
-  let userId = cbCookie?.userId || null;
+  // Resolve userId: cookie → token → live session.
+  let userId = cbCookie?.userId || cbToken?.userId || null;
   if (!userId) {
     // Try to read from live session as a last resort.
     try {
@@ -1356,12 +1410,13 @@ app.post('/dashboard/api/skills/:name/toggle', requireUser(), async (req, res) =
 // ── Bot-accessible connect-link endpoint ──────────────────────────────────────
 // Called by the composio-connect skill running inside the OpenClaw gateway.
 // Protected by SETUP_PASSWORD (Bearer token) — no Supabase user session needed.
-// The bot passes the toolkit key and the public app origin; the server generates
-// a short-lived Composio Connect Link and returns it so the bot can send it to
-// the user in chat.
+//
+// The bot passes toolkitKey, userId (real Supabase UUID), and optional returnTo.
+// The server embeds a signed callbackToken in the callbackUrl so the OAuth
+// callback can identify the user without a browser cookie or live session.
 //
 // POST /api/composio/connect-link
-// Body: { toolkitKey: string, origin?: string }
+// Body: { toolkitKey: string, userId?: string, returnTo?: string, origin?: string }
 // Response: { redirectUrl: string }
 app.post('/api/composio/connect-link', async (req, res) => {
   const pw = (process.env.SETUP_PASSWORD || '').toString();
@@ -1374,18 +1429,48 @@ app.post('/api/composio/connect-link', async (req, res) => {
     return res.status(400).json({ error: 'toolkitKey is required' });
   }
 
+  // userId: real Supabase user UUID. Falls back to 'bot-shared' for legacy callers.
+  const userId = typeof req.body?.userId === 'string' && req.body.userId.trim()
+    ? req.body.userId.trim()
+    : 'bot-shared';
+
+  // returnTo: where to redirect after OAuth. Defaults to Mission Control integrations panel.
+  const returnTo = typeof req.body?.returnTo === 'string' && /^\/[a-zA-Z0-9/_#-]/.test(req.body.returnTo)
+    ? req.body.returnTo
+    : '/mission-control#integrations';
+
   const composioApiKey = await getComposioApiKey();
   if (!composioApiKey) {
     return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY.' });
   }
 
   try {
-    // Use a stable bot user ID so connections accumulate under one Composio session.
-    const botUserId = 'bot-shared';
     const origin = typeof req.body?.origin === 'string' && req.body.origin.trim()
       ? req.body.origin.trim()
       : getRequestOrigin(req);
-    const { redirectUrl } = await generateConnectLink(botUserId, toolkitKey, origin, composioApiKey);
+
+    // Embed a signed token in the callbackUrl so the callback can identify the user
+    // without a browser cookie (the bot has no browser session to set cookies on).
+    const cbToken = makeCallbackToken(userId, toolkitKey, returnTo);
+    const callbackUrl = `${origin}/dashboard/connectors/callback?toolkit=${encodeURIComponent(toolkitKey)}&cbt=${encodeURIComponent(cbToken)}`;
+    const { redirectUrl, connectionRequestId } = await initiateComposioConnection(userId, toolkitKey, callbackUrl, composioApiKey);
+
+    // Save initiated state so the connector list shows "pending" while the user completes OAuth.
+    if (userId !== 'bot-shared') {
+      try {
+        const adminSb = process.env.SUPABASE_SERVICE_ROLE_KEY
+          ? createSupabaseAdminClient()
+          : createSupabaseClient();
+        await adminSb.from('composio_connections').upsert(
+          { user_id: userId, toolkit_key: toolkitKey, connection_request_id: connectionRequestId, connected_account_id: null, status: 'initiated' },
+          { onConflict: 'user_id,toolkit_key' }
+        );
+      } catch (dbErr) {
+        console.error('[api/composio/connect-link] db upsert error:', dbErr.message);
+        // Non-fatal — still return the link.
+      }
+    }
+
     return res.json({ redirectUrl });
   } catch (err) {
     console.error('[api/composio/connect-link] error:', err.message);
