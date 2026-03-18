@@ -265,3 +265,47 @@ Emit from key server actions:
 - **docs/LOG.md**: Dated entry per phase.
 - **TODO.md**: Track phase-by-phase execution, blockers, and verification.
 - **README.md** (root): Add Mission Control to API Endpoints table and Project Structure.
+
+---
+
+## Composio OAuth redirect flow (Clawdi-style)
+
+### Reference flow (working on Clawdi)
+
+1. User starts connect from app (e.g. Connectors tab).
+2. App redirects to Composio Connect Link (`platform.composio.dev/link/lk_...`).
+3. User completes OAuth on provider (e.g. Google consent).
+4. Composio shows its own success page (`platform.composio.dev/link/...?status=success&connectedAccountId=ca_xxx&appName=googlesuper`), then redirects to the **app callback URL** (configured when creating the link).
+5. App callback receives GET with `status=success` and `connected_account_id` (or `connectedAccountId`); app persists the connection and redirects to the final landing page.
+6. Clawdi final URL: `https://www.clawdi.ai/connectors?status=success&connected_account_id=ca_xxx` — a dedicated `/connectors` page with query params for success state.
+
+### Current openclaw-sparti flow
+
+| Step | Implementation |
+|------|----------------|
+| 1–3 | Same: Connect button → Composio link → OAuth on provider. |
+| 4 | Composio redirects to `GET /dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=...` (and optionally `cbt=` for bot flow). Callback is **not** behind `requireUser()` so the redirect from Composio works (no session required). |
+| 5 | Callback reads user from `composio_cb` cookie (browser) or `cbt` token (bot), upserts `composio_connections`, restores Supabase session, then redirects to `returnTo` with hash `&connect=success` or `&connect=failed`. |
+| 6 | Final URL today: `/dashboard#tab=connectors&connect=success` or `/mission-control#integrations&connect=success` or `/connected?toolkit=...` (bot). No dedicated `/connectors` route. |
+
+### Findings
+
+- **Callback URL**: Built in `generateConnectLink()` and `POST /api/composio/connect-link` as `${origin}/dashboard/connectors/callback?toolkit=...` (and `&cbt=` for bot). Composio appends `status` and `connected_account_id` (docs say snake_case; their intermediate page may show camelCase).
+- **User resolution**: Cookie (browser) → signed `cbt` token (bot) → live Supabase session. Session restore from encrypted refresh token in cookie avoids second login after OAuth.
+- **returnTo**: From POST body or Referer; validated same-origin; stored in cookie/token; used in `resolveCallbackReturnUrl()` to build final redirect.
+
+### Duplicate / reuse
+
+- Do **not** add a second callback URL or a second Composio integration path. Single callback: `/dashboard/connectors/callback`. Single integration: `src/integrations/composio.js`.
+
+### Execution plan
+
+1. **Callback param robustness** — Accept both `connected_account_id` (snake_case) and `connectedAccountId` (camelCase) from Composio redirect so the callback works regardless of which param Composio sends. Use the first present for DB upsert.
+2. **Optional: Clawdi-style `/connectors` landing** — Add `GET /connectors` (auth required) that redirects to `/dashboard#tab=connectors`, and if query has `status=success` or `status=failed`, append `&connect=success` or `&connect=failed` to the hash. Allow `returnTo=/connectors` so the callback can redirect to `/connectors?status=success&connected_account_id=xxx`; then `/connectors` redirects to `/dashboard#tab=connectors&connect=success` and the dashboard shows the flash. This gives a Clawdi-style final URL without duplicating the connectors UI.
+3. **Docs** — README and TODO already describe the flow; add note that `/connectors` is an alias for dashboard connectors tab when using Clawdi-style returnTo.
+
+### Verification
+
+- Click Connect on a connector (e.g. Google Super) → complete OAuth → land on dashboard or Mission Control with "Connector linked successfully" and connectors list updated.
+- Bot: "connect Google with composio" → open link → complete OAuth → land on `/connected` or configured returnTo.
+- If `/connectors` is added: set returnTo to `/connectors`, complete OAuth → land on `/connectors?status=success&...` → redirect to `/dashboard#tab=connectors&connect=success` and flash shown.

@@ -518,7 +518,8 @@ Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
 |--------|------|-------------|
 | GET | `/dashboard/connectors` | List connector catalog with per-user connection status |
 | POST | `/dashboard/connectors/:key/connect` | Generate a short-lived Composio Connect Link and persist `initiated` state |
-| GET | `/dashboard/connectors/callback` | OAuth callback — Composio redirects here after auth; marks connection `active` |
+| GET | `/dashboard/connectors/callback` | OAuth callback — Composio redirects here after auth; accepts `status`, `connected_account_id` or `connectedAccountId`, `toolkit`; marks connection `active` |
+| GET | `/connectors` | Clawdi-style landing: redirects to `/dashboard#tab=connectors` with `connect=success`/`failed` from query `status`. Use `returnTo=/connectors` for final URL like `/connectors?status=success&connected_account_id=ca_xxx`. |
 | POST | `/dashboard/connectors/:key/reconnect` | Generate a fresh Connect Link for an existing connection |
 | POST | `/dashboard/connectors/:key/disconnect` | Disconnect from Composio. Optional body: `{ connectedAccountId }` to disconnect a specific account when multiple are connected. |
 
@@ -527,8 +528,8 @@ Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
 2. Server calls `session.authorize(toolkitKey, { callbackUrl })` via Composio SDK
 3. Server returns `{ redirectUrl }` — browser navigates to `https://connect.composio.dev/link/…`
 4. User completes OAuth on Composio's hosted page
-5. Composio redirects to `/dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=…`
-6. Server inserts or updates a `composio_connections` row (by user, toolkit, connected_account_id) and redirects to `/dashboard#tab=connectors` or Mission Control.
+5. Composio redirects to `/dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=…` (callback accepts both `connected_account_id` and `connectedAccountId`).
+6. Server inserts or updates a `composio_connections` row (by user, toolkit, connected_account_id) and redirects to `returnTo` (e.g. `/dashboard#tab=connectors`, `/mission-control#integrations`, `/connectors` for Clawdi-style URL, or `/connected` for bot flow).
 
 Connection state is persisted in the `composio_connections` Supabase table (migrations `20260318_composio_connections.sql` and `20260319_composio_connections_multi_account.sql`). Multiple accounts per connector are supported. The Connectors tab shows each connector with a list of connected accounts (email or label when available from Composio), each with **Reconnect** and **Disconnect** actions. **Google Super** (when configured in Composio) appears as a single recommended card; individual Google connectors are grouped under **Google Workspace (per service)**.
 

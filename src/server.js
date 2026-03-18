@@ -1139,8 +1139,9 @@ function resolveReturnTo(req) {
  * @param {string|null} returnTo - Where to redirect (relative path)
  * @param {'success'|'failed'} outcome
  * @param {string} [toolkitKey] - Toolkit slug, used for /connected page display name
+ * @param {string} [connectedAccountId] - Composio connected_account_id; used when returnTo is /connectors (Clawdi-style)
  */
-function resolveCallbackReturnUrl(returnTo, outcome, toolkitKey) {
+function resolveCallbackReturnUrl(returnTo, outcome, toolkitKey, connectedAccountId) {
   const suffix = outcome === 'success' ? '&connect=success' : '&connect=failed';
   // Only allow same-origin relative paths starting with /
   if (returnTo && /^\/[a-zA-Z0-9/_#?=-]/.test(returnTo)) {
@@ -1151,6 +1152,12 @@ function resolveCallbackReturnUrl(returnTo, outcome, toolkitKey) {
         return `/connected${tk}`;
       }
       return '/dashboard#tab=connectors&connect=failed';
+    }
+    // Clawdi-style: /connectors?status=success&connected_account_id=xxx — GET /connectors will redirect to dashboard with hash
+    if (returnTo === '/connectors' || returnTo.startsWith('/connectors?')) {
+      const params = new URLSearchParams({ status: outcome });
+      if (outcome === 'success' && connectedAccountId) params.set('connected_account_id', connectedAccountId);
+      return `/connectors?${params.toString()}`;
     }
     // Append connect outcome to the hash if the path contains #, else append as hash
     if (returnTo.includes('#')) {
@@ -1256,7 +1263,11 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
 //   2. cbt query param — HMAC-signed token (bot-initiated flow, no cookie available)
 //   3. Live Supabase session (last resort)
 app.get('/dashboard/connectors/callback', async (req, res) => {
-  const { status, connected_account_id, toolkit, cbt } = req.query;
+  // Composio may send snake_case or camelCase (e.g. platform.composio.dev shows camelCase; callback may receive either).
+  const { status, connected_account_id, connectedAccountId, toolkit, cbt } = req.query;
+  const connectedAccountIdResolved = typeof connected_account_id === 'string' && connected_account_id.trim()
+    ? connected_account_id.trim()
+    : (typeof connectedAccountId === 'string' && connectedAccountId.trim() ? connectedAccountId.trim() : null);
 
   // Try cookie first (browser-initiated flow).
   const cbCookie = readComposioCallbackCookie(req);
@@ -1280,7 +1291,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
   // returnTo: cookie takes priority (browser flow), then token (bot flow).
   const returnTo = cbCookie?.returnTo || cbToken?.returnTo || null;
 
-  if (status !== 'success' || !connected_account_id || !toolkitKey) {
+  if (status !== 'success' || !connectedAccountIdResolved || !toolkitKey) {
     return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
   }
 
@@ -1315,7 +1326,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
         {
           user_id: userId,
           toolkit_key: toolkitKey,
-          connected_account_id: String(connected_account_id),
+          connected_account_id: String(connectedAccountIdResolved),
           status: 'active',
         },
         { onConflict: 'user_id,toolkit_key,connected_account_id' }
@@ -1345,7 +1356,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     }
   }
 
-  return res.redirect(resolveCallbackReturnUrl(returnTo, 'success', toolkitKey));
+  return res.redirect(resolveCallbackReturnUrl(returnTo, 'success', toolkitKey, connectedAccountIdResolved));
 });
 
 // ── /connected — lightweight post-OAuth landing page ─────────────────────────
@@ -1393,6 +1404,15 @@ app.get('/connected', (req, res) => {
   </script>
 </body>
 </html>`);
+});
+
+// ── /connectors — Clawdi-style landing after OAuth (redirects to dashboard with hash) ─
+// Callback can use returnTo=/connectors so the final URL is /connectors?status=success&connected_account_id=xxx.
+// This route requires auth and redirects to /dashboard#tab=connectors with &connect=success or &connect=failed.
+app.get('/connectors', requireUser(), (req, res) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : '';
+  const hash = status === 'success' ? 'tab=connectors&connect=success' : status === 'failed' ? 'tab=connectors&connect=failed' : 'tab=connectors';
+  res.redirect(302, `/dashboard#${hash}`);
 });
 
 app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res) => {
