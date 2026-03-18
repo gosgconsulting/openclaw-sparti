@@ -992,8 +992,8 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
 
 const COMPOSIO_CB_COOKIE = 'composio_cb';
 
-function setComposioCallbackCookie(res, userId, toolkitKey) {
-  const payload = Buffer.from(JSON.stringify({ userId, toolkitKey, ts: Date.now() })).toString('base64');
+function setComposioCallbackCookie(res, userId, toolkitKey, returnTo) {
+  const payload = Buffer.from(JSON.stringify({ userId, toolkitKey, returnTo: returnTo || null, ts: Date.now() })).toString('base64');
   res.cookie(COMPOSIO_CB_COOKIE, payload, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -1011,10 +1011,52 @@ function readComposioCallbackCookie(req) {
     if (!parsed?.userId || !parsed?.toolkitKey) return null;
     // Reject stale cookies (> 20 minutes old)
     if (Date.now() - (parsed.ts || 0) > 20 * 60 * 1000) return null;
-    return { userId: String(parsed.userId), toolkitKey: String(parsed.toolkitKey) };
+    return {
+      userId: String(parsed.userId),
+      toolkitKey: String(parsed.toolkitKey),
+      returnTo: typeof parsed.returnTo === 'string' ? parsed.returnTo : null,
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract the originating page path from the request.
+ * The client can send it as `returnTo` in the JSON body, or we fall back to the Referer header.
+ * Only same-origin relative paths are accepted to prevent open-redirect.
+ */
+function resolveReturnTo(req) {
+  const fromBody = req.body?.returnTo;
+  if (typeof fromBody === 'string' && /^\/[a-zA-Z0-9/_#-]/.test(fromBody)) {
+    return fromBody;
+  }
+  const referer = req.headers.referer || req.headers.referrer || '';
+  try {
+    const url = new URL(referer);
+    const origin = getRequestOrigin(req);
+    if (url.origin === origin) {
+      return url.pathname + url.hash;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Determine the return URL after a successful or failed Composio OAuth callback.
+ * Validates the returnTo URL is same-origin and safe (no open-redirect).
+ */
+function resolveCallbackReturnUrl(returnTo, outcome) {
+  const suffix = outcome === 'success' ? '&connect=success' : '&connect=failed';
+  // Only allow same-origin relative paths starting with /
+  if (returnTo && /^\/[a-zA-Z0-9/_#-]/.test(returnTo)) {
+    // Append connect outcome to the hash if the path contains #, else append as hash
+    if (returnTo.includes('#')) {
+      return returnTo + suffix;
+    }
+    return returnTo + '#connect=' + outcome;
+  }
+  return '/dashboard#tab=connectors' + suffix;
 }
 
 app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) => {
@@ -1025,6 +1067,10 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
   if (!composioApiKey) {
     return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY or add app_settings(key=\'composio\').' });
   }
+
+  // Capture the originating page so the callback can redirect back to it.
+  // The client sends it in the request body (preferred) or we fall back to Referer.
+  const returnTo = resolveReturnTo(req);
 
   try {
     const origin = getRequestOrigin(req);
@@ -1049,9 +1095,9 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
       // Non-fatal: still return the link so the user can proceed.
     }
 
-    // Set a short-lived cookie so the callback can identify the user without
-    // requiring a live Supabase session (which may expire during the OAuth flow).
-    setComposioCallbackCookie(res, userId, toolkitKey);
+    // Set a short-lived cookie so the callback can identify the user and
+    // know where to redirect after OAuth (returnTo = originating page).
+    setComposioCallbackCookie(res, userId, toolkitKey, returnTo);
 
     return res.json({ redirectUrl });
   } catch (err) {
@@ -1081,8 +1127,10 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     path: '/dashboard/connectors/callback',
   });
 
+  const returnTo = cbCookie?.returnTo || null;
+
   if (status !== 'success' || !connected_account_id || !toolkitKey) {
-    return res.redirect('/dashboard#tab=connectors&connect=failed');
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed'));
   }
 
   // Resolve userId: prefer cookie (most reliable), fall back to live session.
@@ -1101,7 +1149,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
 
   if (!userId) {
     console.error('[connectors/callback] could not identify user — no cookie and no session');
-    return res.redirect('/dashboard#tab=connectors&connect=failed');
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed'));
   }
 
   try {
@@ -1127,7 +1175,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     console.error('[connectors/callback] error:', err.message);
   }
 
-  return res.redirect('/dashboard#tab=connectors&connect=success');
+  return res.redirect(resolveCallbackReturnUrl(returnTo, 'success'));
 });
 
 app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res) => {
@@ -1161,8 +1209,9 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
       console.error('[connectors/reconnect] db upsert error:', dbErr.message);
     }
 
-    // Same cookie as connect — callback needs it to identify the user.
-    setComposioCallbackCookie(res, userId, toolkitKey);
+    // Same cookie as connect — callback needs it to identify the user and return them to the right page.
+    const returnTo = resolveReturnTo(req);
+    setComposioCallbackCookie(res, userId, toolkitKey, returnTo);
 
     return res.json({ redirectUrl });
   } catch (err) {

@@ -13,6 +13,7 @@ import { getMissionControlPageHTML } from '../mission-control-page.js';
 import { emitAudit } from '../audit.js';
 import { isGatewayRunning, getGatewayInfo, getGatewayUptime, getRecentLogs } from '../gateway.js';
 import { gatewayRPC } from '../gateway-rpc.js';
+import { CHANNEL_GROUPS } from '../channels.js';
 
 const router = Router();
 
@@ -348,6 +349,14 @@ router.get('/api/gateway', (req, res) => {
   };
   const logs = getRecentLogs(0).slice(-40);
   return res.json({ gateway, logs });
+});
+
+// ── Channels (definitions for the Integrations > Channels tab) ───────────────
+// Returns the static CHANNEL_GROUPS list (name, displayName, description, fields, etc.)
+// so the MC page can render channel setup cards without needing SETUP_PASSWORD.
+
+router.get('/api/channels', (req, res) => {
+  return res.json({ channels: CHANNEL_GROUPS });
 });
 
 // ── Board Groups ───────────────────────────────────────────────────────────────

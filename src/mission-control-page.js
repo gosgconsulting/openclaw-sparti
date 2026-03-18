@@ -2155,9 +2155,9 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         const cfgJson = res.ok ? await res.json() : {};
         const channelsCfg = (cfgJson.config && cfgJson.config.channels) ? cfgJson.config.channels : {};
 
-        const chRes = await fetch('/api/schemas', { headers: { Accept: 'application/json' } });
+        const chRes = await fetch('/mission-control/api/channels', { headers: { Accept: 'application/json' } });
         const chJson = chRes.ok ? await chRes.json() : {};
-        const groups = Array.isArray(chJson.channelGroups) ? chJson.channelGroups : [];
+        const groups = Array.isArray(chJson.channels) ? chJson.channels : [];
 
         if (!groups.length) {
           el.innerHTML = '<div class="empty"><div class="empty-icon">📡</div><div class="empty-title">No channels available</div><div class="empty-sub">Channel definitions could not be loaded.</div></div>';
@@ -2358,7 +2358,10 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       errEl.style.display = 'none';
       try {
         const res = await fetch('/dashboard/connectors/' + encodeURIComponent(key) + '/' + encodeURIComponent(action), {
-          method: 'POST', headers: { Accept: 'application/json' },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          // Tell the server to redirect back here after OAuth completes.
+          body: JSON.stringify({ returnTo: '/mission-control#integrations' }),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error || 'HTTP ' + res.status);
@@ -2377,12 +2380,39 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     // Set initial active state for integration tabs
     document.getElementById('itab-channels').classList.add('itab-active');
 
-    if (hash && validPanels.includes(hash)) {
-      setPanel(hash);
-    } else {
-      setPanel('boards');
-      loadBoards();
-    }
+    // Handle Composio OAuth callback redirects back to Mission Control.
+    // After OAuth, Composio redirects to /dashboard/connectors/callback which then
+    // redirects here with #integrations&connect=success or #integrations&connect=failed.
+    (function handleConnectOutcome() {
+      const h = location.hash;
+      if (/connect=success/.test(h)) {
+        history.replaceState(null, '', location.hash.replace(/&?connect=success/, ''));
+        // Auto-open the integrations panel on the connectors tab and reload.
+        setPanel('integrations');
+        setIntegrationTab('connectors');
+        const f = document.createElement('div');
+        f.textContent = '✓ Connector linked successfully.';
+        f.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#0d3d2e;color:#00e5cc;border:1px solid #00e5cc44;border-radius:8px;padding:12px 20px;font-size:13px;z-index:9999;';
+        document.body.appendChild(f);
+        setTimeout(() => { f.style.opacity = '0'; f.style.transition = 'opacity 0.5s'; setTimeout(() => f.remove(), 500); }, 5000);
+        return;
+      }
+      if (/connect=failed/.test(h)) {
+        history.replaceState(null, '', location.hash.replace(/&?connect=failed/, ''));
+        setPanel('integrations');
+        setIntegrationTab('connectors');
+        const errEl = document.getElementById('integrations-connectors-error');
+        if (errEl) { errEl.textContent = 'OAuth connection failed or was cancelled. Please try again.'; errEl.style.display = 'block'; }
+        return;
+      }
+      // Normal navigation
+      if (hash && validPanels.includes(hash)) {
+        setPanel(hash);
+      } else {
+        setPanel('boards');
+        loadBoards();
+      }
+    })();
   </script>
 </body>
 </html>`;

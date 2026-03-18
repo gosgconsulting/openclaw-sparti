@@ -6,6 +6,10 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
+- **Composio OAuth redirect-back to Mission Control (2026-03-19)** — After connecting a service via Composio OAuth, the callback was always redirecting to `/dashboard#tab=connectors&connect=success` regardless of where the user initiated the flow. Fixed with three changes: (1) Added `resolveReturnTo(req)` helper in `server.js` that reads `returnTo` from the POST body (preferred) or `Referer` header. (2) `setComposioCallbackCookie` now stores `returnTo` in the cookie payload; `readComposioCallbackCookie` returns it; `resolveCallbackReturnUrl` validates it (same-origin only, no open-redirect) and appends `&connect=success/failed`. (3) MC page's connect button now sends `{ returnTo: '/mission-control#integrations' }` in the POST body. (4) MC page init now detects `connect=success/failed` in the hash, auto-opens Integrations > Connectors tab, shows a flash toast, and reloads the connector list.
+
+- **MC Integrations > Channels "No channels available" fixed (2026-03-19)** — `loadIntChannels()` was calling `/api/schemas` (returns raw JSON Schema objects, not channel definitions) and looking for `chJson.channelGroups` which never existed. Added `GET /mission-control/api/channels` route in `src/routes/mission-control.js` that returns `{ channels: CHANNEL_GROUPS }`. Updated `loadIntChannels()` to call the new endpoint and read `chJson.channels`. All 17 channels now render correctly.
+
 - **Mission Control 500 on page load fixed (2026-03-19)** — `getMissionControlPageHTML` was crashing at render time with `ReferenceError: p is not defined`. Two unescaped `${p.slug}` interpolations in the Prompts table template (lines 2068, 2076) were being evaluated server-side instead of client-side. Fixed by escaping both to `\${esc(p.slug)}`. Verified with `node --eval` import test.
 
 - **Composio auth configs catalog (2026-03-19)** — Connectors tab now dynamically built from the 30 auth configs in the Composio account. No more hardcoded 3-connector list. New API key `ak_AFQDM9XqtOvTxTPab9lQ` confirmed working. See Done section.
