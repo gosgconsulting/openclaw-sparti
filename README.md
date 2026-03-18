@@ -530,7 +530,7 @@ Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
 5. Composio redirects to `/dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=…`
 6. Server marks the `composio_connections` row `active` and redirects to `/dashboard#tab=connectors`
 
-Connection state is persisted in the `composio_connections` Supabase table (see `supabase/migrations/20260318_composio_connections.sql`).
+Connection state is persisted in the `composio_connections` Supabase table (see `supabase/migrations/20260318_composio_connections.sql`). The Connectors tab shows all integrators from your Composio auth configs, with a search bar to filter by name or description. Google services (Gmail, Drive, Sheets, Docs, Calendar, Meet, etc.) are grouped into a single **Google Workspace** card with expandable per-service Connect buttons (Composio v3 has no single "Google Super" OAuth — each service connects separately).
 
 ### Skills (Supabase auth required)
 

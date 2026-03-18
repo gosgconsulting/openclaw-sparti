@@ -334,12 +334,128 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       history.replaceState(null, '', '#tab=' + tab);
     }
 
+    let allConnectors = [];
+    let connectorsConfigured = false;
+
+    function filterConnectorsBySearch(items, q) {
+      const s = (q || '').trim().toLowerCase();
+      if (!s) return items;
+      return items.filter(c => {
+        const name = (c.name || c.key || '').toLowerCase();
+        const desc = (c.description || '').toLowerCase();
+        const key = (c.key || '').toLowerCase();
+        if (name.includes(s) || desc.includes(s) || key.includes(s)) return true;
+        if (c.children && Array.isArray(c.children)) {
+          return c.children.some(ch => (ch.name || ch.key || '').toLowerCase().includes(s));
+        }
+        return false;
+      });
+    }
+
+    function renderConnectorsList(items, configured) {
+      const list = document.getElementById('connectors-list');
+      if (!list) return;
+
+      function badgeHtml(label, cls) {
+        return '<span class="badge' + (cls ? ' ' + cls : '') + '">' + escapeHtml(label) + '</span>';
+      }
+
+      function connectorEmoji(key, provider) {
+        const k = String(key || '').toLowerCase();
+        if (k.includes('google')) return '🟦';
+        if (k.includes('github')) return '🐙';
+        if (k.includes('slack')) return '💬';
+        if (k.includes('web')) return '🔎';
+        if (provider === 'builtin') return '🧩';
+        return '🔌';
+      }
+
+      function renderOne(c, isChild) {
+        const key = c && (c.key || c.id || c.name) ? String(c.key || c.id || c.name) : 'connector';
+        const name = c && (c.name || c.displayName || c.key) ? String(c.name || c.displayName || c.key) : 'Connector';
+        const desc = c && c.description ? String(c.description) : '';
+        const provider = c && c.provider ? String(c.provider) : 'composio';
+        const badges = (c && c.badges && typeof c.badges === 'object') ? c.badges : {};
+        const accounts = Array.isArray(c?.accounts) ? c.accounts : [];
+        const isUnavailable = badges && badges.unavailable === true;
+        const unavailableReason = c && c.unavailableReason ? String(c.unavailableReason) : '';
+
+        const badgeBits = [];
+        if (provider === 'builtin') badgeBits.push(badgeHtml('Built-in', 'on'));
+        if (badges && badges.recommended) badgeBits.push(badgeHtml('Recommended', 'on'));
+        if (badges && badges.active) badgeBits.push(badgeHtml('Active', 'on'));
+        if (badges && badges.connected) badgeBits.push(badgeHtml('Connected', 'on'));
+        if (isUnavailable) badgeBits.push(badgeHtml('Unavailable', 'off'));
+        else if (!badges?.connected && provider !== 'builtin') badgeBits.push(badgeHtml('Not connected', 'off'));
+
+        const accountLines = accounts.length
+          ? accounts.map(a => {
+              const label = (a && (a.email || a.label || a.id)) ? String(a.email || a.label || a.id) : 'Account';
+              return '<div class="row" style="justify-content: space-between; gap:12px; margin-top:8px;">' +
+                '<div class="mono" style="opacity:0.95;">' + escapeHtml(label) + '</div>' +
+                '<div class="actions" style="gap:10px;">' +
+                  '<button class="btn small" type="button" data-action="reconnect" data-key="' + escapeHtml(key) + '">Reconnect</button>' +
+                  '<button class="btn small" type="button" data-action="disconnect" data-key="' + escapeHtml(key) + '" style="border-color: rgba(255,92,92,0.35);">Disconnect</button>' +
+                '</div>' +
+              '</div>';
+            }).join('')
+          : (isChild ? '' : '<div class="muted" style="margin-top:8px;">No accounts connected.</div>');
+
+        const canAddAccount = provider !== 'builtin' && !isUnavailable;
+        const addAccountBtn = canAddAccount
+          ? '<button class="btn small" type="button" data-action="connect" data-key="' + escapeHtml(key) + '">Add account</button>'
+          : (isUnavailable ? '<button class="btn small" type="button" disabled title="' + escapeHtml(unavailableReason || 'Toolkit not available') + '" style="opacity:0.45;cursor:not-allowed;">Add account</button>' : '');
+
+        const warning = !isChild && isUnavailable && unavailableReason
+          ? '<div class="help" style="margin-top:10px;color:rgba(255,180,50,0.9);">⚠ ' + escapeHtml(unavailableReason) + '</div>'
+          : (!isChild && !configured && provider === 'composio')
+            ? '<div class="help" style="margin-top:10px;">Set <span class="mono">COMPOSIO_API_KEY</span> on the server to enable Composio connectors.</div>'
+            : '';
+
+        if (isChild) {
+          return '<div class="row" style="justify-content:space-between;align-items:center;gap:10px;margin-top:8px;padding:6px 0;border-bottom:1px solid var(--border, #333);">' +
+            '<div><span class="name" style="font-size:13px;">' + escapeHtml(name) + '</span></div>' +
+            '<div class="actions">' + addAccountBtn + '</div>' +
+          '</div>';
+        }
+
+        return '<div class="channel-card">' +
+          '<div class="channel-head">' +
+            '<div class="channel-title">' +
+              '<span class="icon"><span class="emoji">' + escapeHtml(connectorEmoji(key, provider)) + '</span></span>' +
+              '<div>' +
+                '<div class="name">' + escapeHtml(name) + '</div>' +
+                (desc ? '<div class="muted" style="margin-top:2px;">' + escapeHtml(desc) + '</div>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div class="channel-meta">' + badgeBits.join('') + '</div>' +
+          '</div>' +
+          '<div style="margin-top:10px;">' +
+            (c.children && c.children.length
+              ? '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--muted);">Services</summary><div style="margin-top:8px;">' +
+                c.children.map(ch => renderOne(ch, true)).join('') +
+                '</div></details>'
+              : '<div class="row" style="justify-content: space-between;"><div class="muted">Accounts</div><div class="actions">' + addAccountBtn + '</div></div>' + accountLines) +
+            warning +
+          '</div>' +
+        '</div>';
+      }
+
+      if (items.length === 0) {
+        list.innerHTML = '<div class="muted">No connectors match your search.</div>';
+      } else {
+        list.innerHTML = items.map(c => renderOne(c, false)).join('');
+      }
+    }
+
     async function loadConnectors() {
       const loading = document.getElementById('connectors-loading');
       const list = document.getElementById('connectors-list');
       const err = document.getElementById('connectors-error');
       if (list.dataset.loaded === '1') {
         loading.style.display = 'none';
+        const q = (document.getElementById('connectors-search') && document.getElementById('connectors-search').value) || '';
+        renderConnectorsList(filterConnectorsBySearch(allConnectors, q), connectorsConfigured);
         return;
       }
       err.style.display = 'none';
@@ -351,93 +467,12 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         const json = await res.json();
         if (!res.ok) throw new Error(json && json.error ? json.error : ('HTTP ' + res.status));
         const items = Array.isArray(json.connectors) ? json.connectors : [];
-        const configured = json && json.configured === true;
+        connectorsConfigured = json && json.configured === true;
+        allConnectors = items;
 
-        function badgeHtml(label, cls) {
-          return '<span class="badge' + (cls ? ' ' + cls : '') + '">' + escapeHtml(label) + '</span>';
-        }
-
-        function connectorEmoji(key, provider) {
-          const k = String(key || '').toLowerCase();
-          if (k.includes('google')) return '🟦';
-          if (k.includes('github')) return '🐙';
-          if (k.includes('slack')) return '💬';
-          if (k.includes('web')) return '🔎';
-          if (provider === 'builtin') return '🧩';
-          return '🔌';
-        }
-
-        function renderConnector(c) {
-          const key = c && (c.key || c.id || c.name) ? String(c.key || c.id || c.name) : 'connector';
-          const name = c && (c.name || c.displayName || c.key) ? String(c.name || c.displayName || c.key) : 'Connector';
-          const desc = c && c.description ? String(c.description) : '';
-          const provider = c && c.provider ? String(c.provider) : 'composio';
-          const badges = (c && c.badges && typeof c.badges === 'object') ? c.badges : {};
-          const accounts = Array.isArray(c?.accounts) ? c.accounts : [];
-
-          const isUnavailable = badges && badges.unavailable === true;
-          const unavailableReason = c && c.unavailableReason ? String(c.unavailableReason) : '';
-
-          const badgeBits = [];
-          if (provider === 'builtin') badgeBits.push(badgeHtml('Built-in', 'on'));
-          if (badges && badges.recommended) badgeBits.push(badgeHtml('Recommended', 'on'));
-          if (badges && badges.active) badgeBits.push(badgeHtml('Active', 'on'));
-          if (badges && badges.connected) badgeBits.push(badgeHtml('Connected', 'on'));
-          if (isUnavailable) badgeBits.push(badgeHtml('Unavailable', 'off'));
-          else if (!badges?.connected && provider !== 'builtin') badgeBits.push(badgeHtml('Not connected', 'off'));
-
-          const accountLines = accounts.length
-            ? accounts.map(a => {
-                const label = (a && (a.email || a.label || a.id)) ? String(a.email || a.label || a.id) : 'Account';
-                return '<div class="row" style="justify-content: space-between; gap:12px; margin-top:8px;">' +
-                  '<div class="mono" style="opacity:0.95;">' + escapeHtml(label) + '</div>' +
-                  '<div class="actions" style="gap:10px;">' +
-                    '<button class="btn small" type="button" data-action="reconnect" data-key="' + escapeHtml(key) + '">Reconnect</button>' +
-                    '<button class="btn small" type="button" data-action="disconnect" data-key="' + escapeHtml(key) + '" style="border-color: rgba(255,92,92,0.35);">Disconnect</button>' +
-                  '</div>' +
-                '</div>';
-              }).join('')
-            : '<div class="muted" style="margin-top:8px;">No accounts connected.</div>';
-
-          const canAddAccount = provider !== 'builtin' && !isUnavailable;
-          const addAccountBtn = canAddAccount
-            ? '<button class="btn small" type="button" data-action="connect" data-key="' + escapeHtml(key) + '">Add account</button>'
-            : (isUnavailable ? '<button class="btn small" type="button" disabled title="' + escapeHtml(unavailableReason || 'Toolkit not available in your Composio account') + '" style="opacity:0.45;cursor:not-allowed;">Add account</button>' : '');
-
-          const warning = isUnavailable && unavailableReason
-            ? '<div class="help" style="margin-top:10px;color:rgba(255,180,50,0.9);">⚠ ' + escapeHtml(unavailableReason) + '</div>'
-            : (!configured && provider === 'composio')
-              ? '<div class="help" style="margin-top:10px;">Set <span class="mono">COMPOSIO_API_KEY</span> on the server to enable Composio connectors.</div>'
-              : '';
-
-          return '' +
-            '<div class="channel-card">' +
-              '<div class="channel-head">' +
-                '<div class="channel-title">' +
-                  '<span class="icon"><span class="emoji">' + escapeHtml(connectorEmoji(key, provider)) + '</span></span>' +
-                  '<div>' +
-                    '<div class="name">' + escapeHtml(name) + '</div>' +
-                    (desc ? '<div class="muted" style="margin-top:2px;">' + escapeHtml(desc) + '</div>' : '') +
-                  '</div>' +
-                '</div>' +
-                '<div class="channel-meta">' + badgeBits.join('') + '</div>' +
-              '</div>' +
-              '<div style="margin-top:10px;">' +
-                '<div class="row" style="justify-content: space-between;">' +
-                  '<div class="muted">Accounts</div>' +
-                  '<div class="actions">' + addAccountBtn + '</div>' +
-                '</div>' +
-                accountLines +
-                warning +
-              '</div>' +
-            '</div>';
-        }
-
-        if (items.length === 0) {
-          list.innerHTML = '<div class="muted">No connectors available.</div>';
-        } else {
-          list.innerHTML = items.map(renderConnector).join('');
-        }
+        const searchEl = document.getElementById('connectors-search');
+        const q = (searchEl && searchEl.value) ? searchEl.value : '';
+        renderConnectorsList(filterConnectorsBySearch(items, q), connectorsConfigured);
         list.dataset.loaded = '1';
       } catch (e) {
         err.textContent = (e && e.message) ? e.message : 'Failed to load connectors';
@@ -446,6 +481,11 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         loading.style.display = 'none';
       }
     }
+
+    document.getElementById('connectors-search').addEventListener('input', function () {
+      if (allConnectors.length === 0) return;
+      renderConnectorsList(filterConnectorsBySearch(allConnectors, this.value), connectorsConfigured);
+    });
 
     async function runConnectorAction(action, key) {
       const err = document.getElementById('connectors-error');

@@ -87,6 +87,7 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Done
 
+- **Connectors page: all integrators, search bar, Google grouped (2026-03-19):** GET /dashboard/connectors now groups Google toolkits (gmail, googledrive, googlesheets, etc.) into one "Google Workspace" card with `children`; connect/reconnect/disconnect still use per-service keys. Dashboard and Mission Control Connectors tabs: added search input, client-side filter by name/description/key (and child names for grouped card), and render grouped card with expandable "Services" details. README Connectors section updated.
 - **Bot connect API directly (2026-03-19):** composio-connect skill v1.2.0 — users can send one message with app name and API key (e.g. "connect productive.io with api: xyz"). Skill now includes a "Direct API key in message" section: patterns to recognize, extraction rules, toolkitKey derivation for unknown apps (normalize to slug), and security rule to never echo the key. Step-by-step decision logic updated to prioritize "key in message" → Flow 2 (connect-api-key) immediately. No server changes; existing POST /api/composio/connect-api-key already supports any toolkitKey. README Bot Connect Link section updated with one-line note on direct API key in chat.
 
 - **Composio auth configs catalog (2026-03-19):**

@@ -1029,6 +1029,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         <div class="page-sub" style="margin-bottom:12px;">Powered by Composio. Connections are configured server-side.</div>
         <div id="integrations-connectors-error" class="flash error" style="display:none;"></div>
         <div id="integrations-connectors-loading" style="color:var(--muted);font-size:13px;">Loading…</div>
+        <input type="search" id="integrations-connectors-search" placeholder="Search connectors…" style="width:100%;max-width:320px;margin-bottom:12px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:inherit;font-size:14px;" />
         <div id="integrations-connectors-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;"></div>
       </div>
     </div>
@@ -2217,6 +2218,103 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       }
     }
 
+    let intConnectorsAll = [];
+    let intConnectorsConfigured = false;
+
+    function filterIntConnectors(items, q) {
+      const s = (q || '').trim().toLowerCase();
+      if (!s) return items;
+      return items.filter(c => {
+        const name = (c.name || c.key || '').toLowerCase();
+        const desc = (c.description || '').toLowerCase();
+        const key = (c.key || '').toLowerCase();
+        if (name.includes(s) || desc.includes(s) || key.includes(s)) return true;
+        if (c.children && Array.isArray(c.children)) {
+          return c.children.some(ch => (ch.name || ch.key || '').toLowerCase().includes(s));
+        }
+        return false;
+      });
+    }
+
+    function renderIntConnectorsList(items, configured) {
+      const list = document.getElementById('integrations-connectors-list');
+      if (!list) return;
+
+      function connectorEmoji(key) {
+        const k = String(key || '').toLowerCase();
+        if (k.includes('google')) return '🟦';
+        if (k.includes('github')) return '🐙';
+        if (k.includes('slack')) return '💬';
+        if (k.includes('web')) return '🔎';
+        return '🔌';
+      }
+
+      function renderOne(c, isChild) {
+        const key = String(c.key || c.id || c.name || 'connector');
+        const name = esc(c.name || c.displayName || c.key || 'Connector');
+        const desc = c.description ? \`<div class="int-channel-desc">\${esc(c.description)}</div>\` : '';
+        const badges = c.badges || {};
+        const isUnavailable = badges.unavailable === true;
+        const provider = c.provider || 'composio';
+        const accounts = Array.isArray(c.accounts) ? c.accounts : [];
+
+        const statusLabel = badges.connected ? 'Connected' : (isUnavailable ? 'Unavailable' : 'Not connected');
+        const statusCls = badges.connected ? 'on' : 'off';
+
+        const accountLines = accounts.length
+          ? accounts.map(a => {
+              const label = esc(a.email || a.label || a.id || 'Account');
+              return \`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
+                <span style="font-size:12px;font-family:monospace;color:var(--text2);">\${label}</span>
+                <div style="display:flex;gap:6px;">
+                  <button class="btn btn-secondary btn-sm" data-int-action="reconnect" data-int-key="\${esc(key)}">Reconnect</button>
+                  <button class="btn btn-danger btn-sm" data-int-action="disconnect" data-int-key="\${esc(key)}">Disconnect</button>
+                </div>
+              </div>\`;
+            }).join('')
+          : (isChild ? '' : '<div style="font-size:12px;color:var(--muted);margin-top:6px;">No accounts connected.</div>');
+
+        const addBtn = provider !== 'builtin' && !isUnavailable
+          ? \`<button class="btn btn-primary btn-sm" data-int-action="connect" data-int-key="\${esc(key)}">Add account</button>\`
+          : (isUnavailable ? \`<button class="btn btn-secondary btn-sm" disabled style="opacity:0.45;cursor:not-allowed;" title="\${esc(c.unavailableReason || 'Unavailable')}">Add account</button>\` : '');
+
+        const warning = !isChild && isUnavailable && c.unavailableReason
+          ? \`<div style="font-size:12px;color:var(--warn);margin-top:8px;">⚠ \${esc(c.unavailableReason)}</div>\`
+          : (!isChild && !configured && provider === 'composio')
+            ? \`<div style="font-size:12px;color:var(--muted);margin-top:8px;">Set <code>COMPOSIO_API_KEY</code> to enable Composio connectors.</div>\`
+            : '';
+
+        if (isChild) {
+          return \`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:13px;">\${name}</span>
+            \${addBtn}
+          </div>\`;
+        }
+
+        const body = c.children && c.children.length
+          ? \`<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--muted);">Services</summary><div style="margin-top:8px;">\${c.children.map(ch => renderOne(ch, true)).join('')}</div></details>\`
+          : \`<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;"><span style="font-size:12px;color:var(--muted);">Accounts</span>\${addBtn}</div>\${accountLines}\${warning}\`;
+
+        return \`<div class="int-channel-card">
+          <div class="int-channel-head">
+            <div class="int-channel-title">
+              <span style="font-size:20px;">\${connectorEmoji(key)}</span>
+              <div>
+                <div class="int-channel-name">\${name}</div>
+                \${desc}
+              </div>
+            </div>
+            <span class="int-badge \${statusCls}">\${statusLabel}</span>
+          </div>
+          <div>\${body}</div>
+        </div>\`;
+      }
+
+      list.innerHTML = items.length
+        ? items.map(c => renderOne(c, false)).join('')
+        : '<div style="color:var(--muted);font-size:13px;">No connectors match your search.</div>';
+    }
+
     async function loadIntConnectors() {
       const loading = document.getElementById('integrations-connectors-loading');
       const list = document.getElementById('integrations-connectors-list');
@@ -2229,78 +2327,12 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'HTTP ' + res.status);
         const items = Array.isArray(json.connectors) ? json.connectors : [];
-        const configured = json.configured === true;
+        intConnectorsConfigured = json.configured === true;
+        intConnectorsAll = items;
 
-        function connectorEmoji(key) {
-          const k = String(key || '').toLowerCase();
-          if (k.includes('google')) return '🟦';
-          if (k.includes('github')) return '🐙';
-          if (k.includes('slack')) return '💬';
-          if (k.includes('web')) return '🔎';
-          return '🔌';
-        }
-
-        function renderIntConnector(c) {
-          const key = String(c.key || c.id || c.name || 'connector');
-          const name = esc(c.name || c.displayName || c.key || 'Connector');
-          const desc = c.description ? \`<div class="int-channel-desc">\${esc(c.description)}</div>\` : '';
-          const badges = c.badges || {};
-          const isUnavailable = badges.unavailable === true;
-          const provider = c.provider || 'composio';
-          const accounts = Array.isArray(c.accounts) ? c.accounts : [];
-
-          const statusLabel = badges.connected ? 'Connected' : (isUnavailable ? 'Unavailable' : 'Not connected');
-          const statusCls = badges.connected ? 'on' : 'off';
-
-          const accountLines = accounts.length
-            ? accounts.map(a => {
-                const label = esc(a.email || a.label || a.id || 'Account');
-                return \`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
-                  <span style="font-size:12px;font-family:monospace;color:var(--text2);">\${label}</span>
-                  <div style="display:flex;gap:6px;">
-                    <button class="btn btn-secondary btn-sm" data-int-action="reconnect" data-int-key="\${esc(key)}">Reconnect</button>
-                    <button class="btn btn-danger btn-sm" data-int-action="disconnect" data-int-key="\${esc(key)}">Disconnect</button>
-                  </div>
-                </div>\`;
-              }).join('')
-            : '<div style="font-size:12px;color:var(--muted);margin-top:6px;">No accounts connected.</div>';
-
-          const addBtn = provider !== 'builtin' && !isUnavailable
-            ? \`<button class="btn btn-primary btn-sm" data-int-action="connect" data-int-key="\${esc(key)}">Add account</button>\`
-            : (isUnavailable ? \`<button class="btn btn-secondary btn-sm" disabled style="opacity:0.45;cursor:not-allowed;" title="\${esc(c.unavailableReason || 'Unavailable')}">Add account</button>\` : '');
-
-          const warning = isUnavailable && c.unavailableReason
-            ? \`<div style="font-size:12px;color:var(--warn);margin-top:8px;">⚠ \${esc(c.unavailableReason)}</div>\`
-            : (!configured && provider === 'composio')
-              ? \`<div style="font-size:12px;color:var(--muted);margin-top:8px;">Set <code>COMPOSIO_API_KEY</code> to enable Composio connectors.</div>\`
-              : '';
-
-          return \`<div class="int-channel-card">
-            <div class="int-channel-head">
-              <div class="int-channel-title">
-                <span style="font-size:20px;">\${connectorEmoji(key)}</span>
-                <div>
-                  <div class="int-channel-name">\${name}</div>
-                  \${desc}
-                </div>
-              </div>
-              <span class="int-badge \${statusCls}">\${statusLabel}</span>
-            </div>
-            <div>
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
-                <span style="font-size:12px;color:var(--muted);">Accounts</span>
-                \${addBtn}
-              </div>
-              \${accountLines}
-              \${warning}
-            </div>
-          </div>\`;
-        }
-
-        list.innerHTML = items.length
-          ? items.map(renderIntConnector).join('')
-          : '<div style="color:var(--muted);font-size:13px;">No connectors available.</div>';
-
+        const searchEl = document.getElementById('integrations-connectors-search');
+        const q = (searchEl && searchEl.value) ? searchEl.value : '';
+        renderIntConnectorsList(filterIntConnectors(items, q), intConnectorsConfigured);
         intConnectorsLoaded = true;
       } catch (err) {
         errEl.textContent = err.message || 'Failed to load connectors';
@@ -2309,6 +2341,12 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         loading.style.display = 'none';
       }
     }
+
+    const intSearchEl = document.getElementById('integrations-connectors-search');
+    if (intSearchEl) intSearchEl.addEventListener('input', function () {
+      if (intConnectorsAll.length === 0) return;
+      renderIntConnectorsList(filterIntConnectors(intConnectorsAll, this.value), intConnectorsConfigured);
+    });
 
     document.getElementById('integrations-connectors-list').addEventListener('click', async (ev) => {
       const btn = ev.target.closest ? ev.target.closest('button[data-int-action][data-int-key]') : null;
