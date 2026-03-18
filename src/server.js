@@ -596,6 +596,8 @@ app.use('/api/sparti', spartiContextRouter);
 app.get('/auth', (req, res) => {
   const redirect = req.query.redirect || '/dashboard';
   const mode = req.query.mode === 'signup' ? 'signup' : 'login';
+  // Clear oc_return so it is only used once for the redirect-to-auth case
+  res.clearCookie(OC_RETURN_COOKIE, { path: '/', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.send(getAuthPageHTML({ redirect, mode }));
 });
 
@@ -1017,7 +1019,7 @@ function decryptRefreshFromCallback(encrypted) {
     const enc = buf.subarray(32);
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
-    return decipher.update(enc) + decipher.final('utf8');
+    return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
   } catch {
     return null;
   }

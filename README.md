@@ -78,7 +78,7 @@ Includes a terminal mode for advanced users who prefer the full CLI experience.
 - Non-root container (`openclaw:openclaw`, UID 1001)
 - tini as PID 1 for proper signal handling
 - Gateway bound to loopback only — wrapper handles all external traffic
-- Cookie-based auth with httpOnly, sameSite=lax (so session survives OAuth return from Composio etc.), secure in production
+- Cookie-based auth with httpOnly, sameSite=lax (so session survives OAuth return from Composio etc.), secure in production. After Composio OAuth, the callback restores the Supabase session from an encrypted refresh token in the callback cookie so the user is not asked to log in again.
 - Proxy strips forwarded headers on WebSocket upgrades
 
 ### Operations
