@@ -1,3 +1,5 @@
+import { Composio } from '@composio/core';
+
 function withTimeout(ms) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(new Error('timeout')), ms);
@@ -7,6 +9,12 @@ function withTimeout(ms) {
 function toSafeString(v) {
   if (v == null) return '';
   return String(v);
+}
+
+function getComposioClient() {
+  const apiKey = (process.env.COMPOSIO_API_KEY || '').trim();
+  if (!apiKey) throw new Error('Missing COMPOSIO_API_KEY');
+  return new Composio({ apiKey });
 }
 
 /**
@@ -58,3 +66,78 @@ export async function listComposioApps({ apiKey, limit = 50 } = {}) {
   }
 }
 
+/**
+ * Initiate a Composio OAuth connection for a user.
+ * Returns a redirectUrl (Connect Link) the browser should navigate to.
+ * Never call from browser — uses COMPOSIO_API_KEY.
+ *
+ * @param {string} userId - Supabase user UUID (used as Composio user_id)
+ * @param {string} toolkitKey - Composio toolkit slug (e.g. 'google_super', 'github')
+ * @param {string} callbackUrl - URL Composio redirects to after auth
+ * @returns {Promise<{ redirectUrl: string, connectionRequestId: string }>}
+ */
+export async function initiateComposioConnection(userId, toolkitKey, callbackUrl) {
+  const composio = getComposioClient();
+  const session = await composio.create(userId);
+  const connectionRequest = await session.authorize(toolkitKey, { callbackUrl });
+  return {
+    redirectUrl: connectionRequest.redirectUrl,
+    connectionRequestId: connectionRequest.id ?? connectionRequest.connectionRequestId ?? '',
+  };
+}
+
+/**
+ * List connected accounts for a user from Composio.
+ * Returns an array of { toolkit_key, connected_account_id, status }.
+ * Never call from browser.
+ *
+ * @param {string} userId - Supabase user UUID
+ * @returns {Promise<Array<{ toolkit_key: string, connected_account_id: string, status: string }>>}
+ */
+export async function listComposioConnectedAccounts(userId) {
+  const composio = getComposioClient();
+  const session = await composio.create(userId);
+  const toolkits = await session.toolkits();
+  const items = Array.isArray(toolkits?.items) ? toolkits.items : [];
+  return items
+    .filter(t => t.connection?.connectedAccount?.id || t.connection?.connected_account?.id)
+    .map(t => ({
+      toolkit_key: toSafeString(t.slug || t.key || t.name),
+      connected_account_id: toSafeString(
+        t.connection?.connectedAccount?.id ?? t.connection?.connected_account?.id ?? ''
+      ),
+      status: t.connection?.isActive || t.connection?.is_active ? 'active' : 'inactive',
+    }));
+}
+
+/**
+ * Disconnect a Composio connected account.
+ * Never call from browser.
+ *
+ * @param {string} connectedAccountId - The Composio connected_account_id to disconnect
+ * @returns {Promise<void>}
+ */
+export async function disconnectComposioAccount(connectedAccountId) {
+  const apiKey = (process.env.COMPOSIO_API_KEY || '').trim();
+  if (!apiKey) throw new Error('Missing COMPOSIO_API_KEY');
+
+  const { signal, done } = withTimeout(12000);
+  try {
+    const res = await fetch(
+      `https://backend.composio.dev/api/v1/connectedAccounts/${encodeURIComponent(connectedAccountId)}`,
+      {
+        method: 'DELETE',
+        headers: { 'x-api-key': apiKey, 'accept': 'application/json' },
+        signal,
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      let msg = `Composio HTTP ${res.status}`;
+      try { const j = JSON.parse(text); msg = j.error || j.message || msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+  } finally {
+    done();
+  }
+}

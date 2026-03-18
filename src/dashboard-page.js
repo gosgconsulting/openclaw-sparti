@@ -69,8 +69,9 @@ function renderChannelCard(ch, currentCfg) {
   `;
 }
 
-export function getDashboardPageHTML({ userEmail, instance, error, channelGroups, channelsConfig } = {}) {
+export function getDashboardPageHTML({ userEmail, instance, error, channelGroups, channelsConfig, saved } = {}) {
   const errHtml = error ? `<div class="error">${escapeHtml(error)}</div>` : '';
+  const savedHtml = saved ? `<div class="success" id="save-flash">${escapeHtml(saved)} channel saved — gateway restarted.</div>` : '';
   const groups = Array.isArray(channelGroups) ? channelGroups : [];
   const cfg = channelsConfig && typeof channelsConfig === 'object' ? channelsConfig : {};
 
@@ -153,6 +154,15 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       border: 1px solid rgba(255,92,92,0.35);
       background: rgba(153,27,27,0.2);
       color: #ff8a8a;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .success {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(0,229,204,0.35);
+      background: rgba(0,229,204,0.08);
+      color: #00e5cc;
       font-size: 14px;
       margin-bottom: 12px;
     }
@@ -281,7 +291,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     <div class="wrap top">
       <div>
         <h1>Dashboard</h1>
-        <div class="meta">${userEmail ? `Signed in as <span class="mono">${escapeHtml(userEmail)}</span>` : ''}</div>
+        <div class="meta">${userEmail ? `Signed in as <span class="mono">${escapeHtml(userEmail)}</span>` : ''} &nbsp;<span id="gw-status" style="font-size:12px;color:#a1a1aa;"></span></div>
       </div>
       <form method="POST" action="/auth/logout">
         <button class="logout" type="submit">Log out</button>
@@ -292,6 +302,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     <div class="wrap grid">
       <div class="card">
         ${errHtml}
+        ${savedHtml}
         <div class="row" style="justify-content: space-between;">
           <div class="tabs" role="tablist" aria-label="Dashboard tabs">
             <button class="tab active" data-tab="channels" type="button">Channels</button>
@@ -448,8 +459,14 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json && json.error ? json.error : ('HTTP ' + res.status));
-        // For now, actions are stubs; keep UX explicit.
-        alert('Done.');
+        if (json && json.redirectUrl) {
+          window.location.href = json.redirectUrl;
+          return;
+        }
+        // Disconnect / reconnect without redirect: reload connector list
+        const list = document.getElementById('connectors-list');
+        if (list) list.dataset.loaded = '';
+        loadConnectors();
       } catch (e) {
         err.textContent = (e && e.message) ? e.message : 'Action failed';
         err.style.display = 'block';
@@ -476,6 +493,30 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     });
     const m = location.hash.match(/tab=([a-z]+)/);
     if (m && (m[1] === 'connectors' || m[1] === 'channels')) setTab(m[1]);
+
+    // Auto-clear save flash after 5s
+    const flash = document.getElementById('save-flash');
+    if (flash) setTimeout(() => { flash.style.opacity = '0'; flash.style.transition = 'opacity 0.5s'; setTimeout(() => flash.remove(), 500); }, 5000);
+
+    // Poll gateway status every 5s and update the status indicator
+    async function pollGatewayStatus() {
+      try {
+        const res = await fetch('/lite/api/status', { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) return;
+        const json = await res.json();
+        const el = document.getElementById('gw-status');
+        if (!el) return;
+        if (json.gatewayRunning) {
+          el.textContent = 'Gateway: running';
+          el.style.color = '#00e5cc';
+        } else {
+          el.textContent = 'Gateway: stopped';
+          el.style.color = '#ff8a8a';
+        }
+      } catch { /* ignore */ }
+    }
+    pollGatewayStatus();
+    setInterval(pollGatewayStatus, 5000);
   </script>
 </body>
 </html>`;

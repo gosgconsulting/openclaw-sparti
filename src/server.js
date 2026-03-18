@@ -655,11 +655,13 @@ app.get('/dashboard', requireUser(), async (req, res) => {
       }
     }
 
+    const savedChannel = (req.query.saved || '').toString().slice(0, 64) || null;
     return res.send(getDashboardPageHTML({
       userEmail: req.user?.email,
       instance: instances[0] || null,
       channelGroups: CHANNEL_GROUPS,
       channelsConfig,
+      saved: savedChannel || undefined,
     }));
   } catch (err) {
     return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instance: null, channelGroups: CHANNEL_GROUPS, channelsConfig: {}, error: err.message || 'Failed to load dashboard' }));
@@ -712,12 +714,14 @@ app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
       throw new Error((setResult.stderr || setResult.stdout || 'Failed to update channel').trim());
     }
 
-    // Ensure gateway is up so config takes effect immediately
-    if (!isGatewayRunning()) {
-      await startGateway();
+    // Restart or start the gateway so the new channel config takes effect.
+    // If already running, stop then start so OpenClaw reloads the config.
+    if (isGatewayRunning()) {
+      await stopGateway();
     }
+    await startGateway();
 
-    return res.redirect('/dashboard#tab=channels');
+    return res.redirect('/dashboard?saved=' + encodeURIComponent(channelName) + '#tab=channels');
   } catch (err) {
     try {
       const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });

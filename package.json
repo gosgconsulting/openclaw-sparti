@@ -15,10 +15,11 @@
     "test:e2e": "node --test test/deploy-flow.test.js"
   },
   "dependencies": {
+    "@composio/core": "^0.6.5",
+    "@supabase/supabase-js": "^2.57.4",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "archiver": "^7.0.1",
-    "@supabase/supabase-js": "^2.57.4",
     "express": "^5.0.1",
     "http-proxy": "^1.18.1",
     "jszip": "^3.10.1",
