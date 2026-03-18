@@ -35,7 +35,12 @@ import { getDashboardPageHTML } from './dashboard-page.js';
 import { getInstanceConsolePageHTML } from './console-page.js';
 import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
-import { listComposioApps } from './integrations/composio.js';
+import {
+  listComposioApps,
+  generateConnectLink,
+  listComposioConnectedAccounts,
+  disconnectComposioAccount,
+} from './integrations/composio.js';
 
 // Configuration
 const PORT = process.env.PORT || 8080;
@@ -755,7 +760,7 @@ app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
 });
 
 app.get('/dashboard/connectors', requireUser(), async (req, res) => {
-  // Implemented in SaaS mode: server-side only (no secrets in browser).
+  // Server-side only — no secrets in browser.
   const apiKey = process.env.COMPOSIO_API_KEY || '';
   let apps = [];
   let configured = false;
@@ -769,26 +774,51 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
     }
   }
 
+  // Load this user's connection state from Supabase.
+  let connectionsByKey = {};
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { data: rows } = await supabase
+      .from('composio_connections')
+      .select('toolkit_key,status,connected_account_id')
+      .eq('user_id', req.user.id);
+    for (const row of rows || []) {
+      connectionsByKey[row.toolkit_key] = row;
+    }
+  } catch {
+    // Non-fatal: proceed without connection state.
+  }
+
+  function connectionBadge(key) {
+    const row = connectionsByKey[key];
+    if (!row) return { connected: false };
+    return { connected: row.status === 'active', status: row.status };
+  }
+
   const googleSuper = pickAppByCandidates(apps, ['google_super', 'google-super', 'google super', 'google', 'g-suite', 'gsuite']);
   const github = pickAppByCandidates(apps, ['github']);
   const slack = pickAppByCandidates(apps, ['slack']);
 
-  // Web Search is built-in for this app; Composio is optional.
+  const googleKey = googleSuper?.key || 'google_super';
+  const githubKey = github?.key || 'github';
+  const slackKey = slack?.key || 'slack';
+
+  // Web Search is built-in; Composio is optional.
   const connectors = [
     {
-      key: googleSuper?.key || 'google_super',
+      key: googleKey,
       name: 'Google Super',
       description: googleSuper?.description || 'Google Super App combines all Google services including Gmail, Drive, Calendar, and more.',
       provider: 'composio',
-      badges: { connected: false, recommended: true },
+      badges: { recommended: true, ...connectionBadge(googleKey) },
       accounts: [],
     },
     {
-      key: github?.key || 'github',
+      key: githubKey,
       name: 'GitHub',
       description: github?.description || 'Source control, issues, pull requests, and workflows.',
       provider: 'composio',
-      badges: { connected: false, recommended: false },
+      badges: { recommended: false, ...connectionBadge(githubKey) },
       accounts: [],
     },
     {
@@ -800,11 +830,11 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
       accounts: [],
     },
     {
-      key: slack?.key || 'slack',
+      key: slackKey,
       name: 'Slack',
       description: slack?.description || 'Send messages, manage channels, and automate workflows.',
       provider: 'composio',
-      badges: { connected: false, recommended: true },
+      badges: { recommended: true, ...connectionBadge(slackKey) },
       accounts: [],
     },
   ];
@@ -812,25 +842,166 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
   return res.json({ connectors, configured });
 });
 
-// Connector actions (UI endpoints). These are intentionally server-side.
-// Future work: implement Composio OAuth/account linking and persist account state.
+// ── Connector OAuth actions ────────────────────────────────────────────────
+// All routes are server-side only. The browser never touches COMPOSIO_API_KEY.
+// Flow: connect → Composio issues a short-lived Connect Link → browser redirects
+//       → user completes OAuth on Composio's hosted page → Composio redirects
+//       back to /dashboard/connectors/callback → we mark the row active.
+
 app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) => {
-  return res.status(501).json({
-    error: 'Connector linking not implemented yet.',
-    hint: 'UI is ready. Next step is adding Composio auth flow + persistence.',
-  });
+  const toolkitKey = req.params.key;
+  const userId = req.user.id;
+
+  if (!process.env.COMPOSIO_API_KEY) {
+    return res.status(503).json({ error: 'Composio is not configured on this server.' });
+  }
+
+  try {
+    const origin = getRequestOrigin(req);
+    const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin);
+
+    // Persist the initiated connection so we can match it on callback.
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { error: dbErr } = await supabase
+      .from('composio_connections')
+      .upsert(
+        {
+          user_id: userId,
+          toolkit_key: toolkitKey,
+          connection_request_id: connectionRequestId,
+          connected_account_id: null,
+          status: 'initiated',
+        },
+        { onConflict: 'user_id,toolkit_key' }
+      );
+    if (dbErr) {
+      console.error('[connectors/connect] db upsert error:', dbErr.message);
+      // Non-fatal: still return the link so the user can proceed.
+    }
+
+    return res.json({ redirectUrl });
+  } catch (err) {
+    console.error('[connectors/connect] error:', err.message);
+    return res.status(502).json({ error: err.message || 'Failed to generate connect link' });
+  }
+});
+
+// Callback from Composio after the user completes (or fails) OAuth.
+// Composio appends: ?status=success&connected_account_id=ca_xxx
+// (plus any params we embedded in the callbackUrl, e.g. toolkit=...)
+app.get('/dashboard/connectors/callback', requireUser(), async (req, res) => {
+  const { status, connected_account_id, toolkit } = req.query;
+  const userId = req.user.id;
+  const toolkitKey = typeof toolkit === 'string' ? toolkit.trim() : '';
+
+  if (status !== 'success' || !connected_account_id || !toolkitKey) {
+    // Auth failed or params missing — send user back to connectors tab with error.
+    return res.redirect('/dashboard#tab=connectors&connect=failed');
+  }
+
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { error: dbErr } = await supabase
+      .from('composio_connections')
+      .upsert(
+        {
+          user_id: userId,
+          toolkit_key: toolkitKey,
+          connected_account_id: String(connected_account_id),
+          status: 'active',
+        },
+        { onConflict: 'user_id,toolkit_key' }
+      );
+    if (dbErr) {
+      console.error('[connectors/callback] db upsert error:', dbErr.message);
+    }
+  } catch (err) {
+    console.error('[connectors/callback] error:', err.message);
+  }
+
+  return res.redirect('/dashboard#tab=connectors&connect=success');
 });
 
 app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res) => {
-  return res.status(501).json({
-    error: 'Connector reconnect not implemented yet.',
-  });
+  // Reconnect is identical to connect: generate a fresh short-lived link.
+  const toolkitKey = req.params.key;
+  const userId = req.user.id;
+
+  if (!process.env.COMPOSIO_API_KEY) {
+    return res.status(503).json({ error: 'Composio is not configured on this server.' });
+  }
+
+  try {
+    const origin = getRequestOrigin(req);
+    const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin);
+
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    const { error: dbErr } = await supabase
+      .from('composio_connections')
+      .upsert(
+        {
+          user_id: userId,
+          toolkit_key: toolkitKey,
+          connection_request_id: connectionRequestId,
+          connected_account_id: null,
+          status: 'initiated',
+        },
+        { onConflict: 'user_id,toolkit_key' }
+      );
+    if (dbErr) {
+      console.error('[connectors/reconnect] db upsert error:', dbErr.message);
+    }
+
+    return res.json({ redirectUrl });
+  } catch (err) {
+    console.error('[connectors/reconnect] error:', err.message);
+    return res.status(502).json({ error: err.message || 'Failed to generate reconnect link' });
+  }
 });
 
 app.post('/dashboard/connectors/:key/disconnect', requireUser(), async (req, res) => {
-  return res.status(501).json({
-    error: 'Connector disconnect not implemented yet.',
-  });
+  const toolkitKey = req.params.key;
+  const userId = req.user.id;
+
+  try {
+    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+
+    // Look up the connected_account_id for this user + toolkit.
+    const { data: row, error: fetchErr } = await supabase
+      .from('composio_connections')
+      .select('connected_account_id')
+      .eq('user_id', userId)
+      .eq('toolkit_key', toolkitKey)
+      .maybeSingle();
+
+    if (fetchErr) {
+      return res.status(500).json({ error: fetchErr.message });
+    }
+
+    if (row?.connected_account_id) {
+      try {
+        await disconnectComposioAccount(row.connected_account_id);
+      } catch (composioErr) {
+        // Log but don't block — still mark as disconnected locally.
+        console.error('[connectors/disconnect] Composio error:', composioErr.message);
+      }
+    }
+
+    const { error: updateErr } = await supabase
+      .from('composio_connections')
+      .update({ status: 'disconnected', connected_account_id: null })
+      .eq('user_id', userId)
+      .eq('toolkit_key', toolkitKey);
+
+    if (updateErr) {
+      return res.status(500).json({ error: updateErr.message });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[connectors/disconnect] error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to disconnect' });
+  }
 });
 
 app.get('/api/instances', requireUser(), async (req, res) => {

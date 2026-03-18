@@ -6,12 +6,17 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
+- **Composio connector OAuth flow** — Implemented. Routes wired, Supabase table created. See Done section for details.
 - **Telegram bot not connecting** — Root cause identified and fixed. See Done section.
 
 ---
 
 ## Next
 
+- **Run Supabase migration** — Apply `supabase/migrations/20260318_composio_connections.sql` to your Supabase project before testing connectors.
+- **Set `COMPOSIO_API_KEY`** in Railway env vars (and `.env` for local dev) — connector routes return 503 without it.
+- **Test connect flow end-to-end**: click Connect on a connector card → should redirect to `connect.composio.dev` → complete OAuth → should land back on `/dashboard#tab=connectors` with the card showing "connected".
+- **Consider webhook for token expiry** — subscribe to `composio.connected_account.expired` to auto-mark rows `expired` in `composio_connections` and prompt users to reconnect.
 - Decide multi-tenant approach: Option A (multi-process on one app) vs Option B (one deployment per user).
 - If Option A: implement instance ↔ state dir mapping, then instance-scoped gateway manager, then auth/routing for `/lite` and `/onboard`.
 - Verify Telegram bot connects after save by checking `/lite/api/status` (channels field) and gateway logs at `/lite`.
@@ -37,6 +42,15 @@ Active tasks, next steps, blockers, and verification notes.
 ## Done
 
 - Plan created for "child OpenClaw per user" (findings, options, execution steps). See `docs/PLAN.md`.
+- **Composio connector OAuth flow (2026-03-18):**
+  - Created `supabase/migrations/20260318_composio_connections.sql` — `composio_connections` table with RLS, unique constraint on `(user_id, toolkit_key)`, status enum, auto-updated `updated_at`.
+  - Added `generateConnectLink(userId, toolkitKey, origin)` to `src/integrations/composio.js` — wraps `initiateComposioConnection` with correct callback URL pattern.
+  - Wired `POST /dashboard/connectors/:key/connect` — calls `generateConnectLink`, upserts `initiated` row, returns `{ redirectUrl }` (browser redirects to Composio's hosted OAuth page).
+  - Added `GET /dashboard/connectors/callback` — receives Composio redirect after OAuth, marks row `active` with `connected_account_id`, redirects to `/dashboard#tab=connectors`.
+  - Wired `POST /dashboard/connectors/:key/reconnect` — same as connect (fresh link, resets row to `initiated`).
+  - Wired `POST /dashboard/connectors/:key/disconnect` — fetches `connected_account_id`, calls `disconnectComposioAccount`, marks row `disconnected`.
+  - Enriched `GET /dashboard/connectors` — queries `composio_connections` for the current user and merges `connected`/`status` badges into each connector card.
+  - Updated `README.md`: added `COMPOSIO_API_KEY` to env vars table, added Connectors API section with full flow description.
 - **Telegram bot fix (2026-03-18):**
   - Root cause: `POST /dashboard/channels/telegram` only started the gateway if it was stopped. If already running, the new `botToken` was written to config but the gateway was never restarted — so OpenClaw never picked up the Telegram channel.
   - Fix: changed the route to always stop + restart the gateway after a successful `config set`, ensuring the new channel config takes effect immediately.

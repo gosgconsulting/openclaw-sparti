@@ -277,6 +277,7 @@ Install skills from two sources:
 | `INTERNAL_GATEWAY_PORT` | Internal port for OpenClaw gateway | `18789` | No |
 | `PORT` | External port (Railway overrides this) | `8080` | No |
 | `SEARXNG_URL` | SearXNG instance URL (enables search skill) | — | No |
+| `COMPOSIO_API_KEY` | Composio API key — enables connector OAuth flows (Google, GitHub, Slack, etc.) | — | No |
 
 ### Railway Volume Setup
 
@@ -497,6 +498,28 @@ openclaw-railway/
 | POST | `/lite/api/restore` | Restore from backup |
 | POST | `/lite/api/upgrade` | In-app upgrade |
 | WS | `/lite/ws` | PTY terminal (bash shell) |
+
+### Connectors (Supabase auth required)
+
+Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/dashboard/connectors` | List connector catalog with per-user connection status |
+| POST | `/dashboard/connectors/:key/connect` | Generate a short-lived Composio Connect Link and persist `initiated` state |
+| GET | `/dashboard/connectors/callback` | OAuth callback — Composio redirects here after auth; marks connection `active` |
+| POST | `/dashboard/connectors/:key/reconnect` | Generate a fresh Connect Link for an existing connection |
+| POST | `/dashboard/connectors/:key/disconnect` | Disconnect from Composio and mark row `disconnected` |
+
+**Connect Link flow:**
+1. Browser calls `POST /dashboard/connectors/:key/connect`
+2. Server calls `session.authorize(toolkitKey, { callbackUrl })` via Composio SDK
+3. Server returns `{ redirectUrl }` — browser navigates to `https://connect.composio.dev/link/…`
+4. User completes OAuth on Composio's hosted page
+5. Composio redirects to `/dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=…`
+6. Server marks the `composio_connections` row `active` and redirects to `/dashboard#tab=connectors`
+
+Connection state is persisted in the `composio_connections` Supabase table (see `supabase/migrations/20260318_composio_connections.sql`).
 
 ### Other (password required)
 

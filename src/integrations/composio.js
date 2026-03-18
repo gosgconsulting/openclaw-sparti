@@ -71,6 +71,10 @@ export async function listComposioApps({ apiKey, limit = 50 } = {}) {
  * Returns a redirectUrl (Connect Link) the browser should navigate to.
  * Never call from browser — uses COMPOSIO_API_KEY.
  *
+ * The Connect Link is short-lived: it expires if the user abandons the OAuth
+ * flow without completing it (Composio leaves the connection in INITIATED state
+ * until it expires). Always generate a fresh link on each connect/reconnect click.
+ *
  * @param {string} userId - Supabase user UUID (used as Composio user_id)
  * @param {string} toolkitKey - Composio toolkit slug (e.g. 'google_super', 'github')
  * @param {string} callbackUrl - URL Composio redirects to after auth
@@ -84,6 +88,24 @@ export async function initiateComposioConnection(userId, toolkitKey, callbackUrl
     redirectUrl: connectionRequest.redirectUrl,
     connectionRequestId: connectionRequest.id ?? connectionRequest.connectionRequestId ?? '',
   };
+}
+
+/**
+ * Generate a fresh Composio Connect Link for a user + toolkit.
+ * Convenience wrapper over initiateComposioConnection that builds the
+ * callback URL from the request origin automatically.
+ *
+ * The link is single-use and short-lived (expires on abandonment).
+ * Call this on every "Connect" or "Reconnect" click — never cache the URL.
+ *
+ * @param {string} userId - Supabase user UUID
+ * @param {string} toolkitKey - Composio toolkit slug
+ * @param {string} origin - Request origin (e.g. 'https://your-app.railway.app')
+ * @returns {Promise<{ redirectUrl: string, connectionRequestId: string }>}
+ */
+export async function generateConnectLink(userId, toolkitKey, origin) {
+  const callbackUrl = `${origin}/dashboard/connectors/callback?toolkit=${encodeURIComponent(toolkitKey)}`;
+  return initiateComposioConnection(userId, toolkitKey, callbackUrl);
 }
 
 /**
