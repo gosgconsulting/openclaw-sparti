@@ -300,6 +300,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
           <div class="actions">
             ${publicUrl}
             ${publishBtn}
+            <a class="btn small" href="/openclaw" target="_blank" rel="noreferrer">Open console</a>
             <a class="btn small" href="/lite" target="_blank" rel="noreferrer">Admin</a>
           </div>
         </div>
