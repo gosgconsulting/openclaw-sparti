@@ -1,10 +1,11 @@
 -- Mission Control tables
--- boards, tasks, approval_requests, audit_events
+-- mc_boards, mc_tasks, mc_approval_requests, mc_audit_events
+-- Prefixed with mc_ to avoid collision with existing public.tasks table.
 -- All tables use RLS scoped to auth.uid().
 
--- ── boards ────────────────────────────────────────────────────────────────────
+-- ── mc_boards ─────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS boards (
+CREATE TABLE IF NOT EXISTS mc_boards (
   id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name        text        NOT NULL,
@@ -15,27 +16,27 @@ CREATE TABLE IF NOT EXISTS boards (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
-ALTER TABLE boards ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mc_boards ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "boards: owner read"   ON boards FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "boards: owner insert" ON boards FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "boards: owner update" ON boards FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "boards: owner delete" ON boards FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "mc_boards: owner read"   ON mc_boards FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "mc_boards: owner insert" ON mc_boards FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "mc_boards: owner update" ON mc_boards FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "mc_boards: owner delete" ON mc_boards FOR DELETE USING (auth.uid() = user_id);
 
-CREATE OR REPLACE FUNCTION update_boards_updated_at()
+CREATE OR REPLACE FUNCTION update_mc_boards_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$;
 
-CREATE TRIGGER boards_updated_at
-  BEFORE UPDATE ON boards
-  FOR EACH ROW EXECUTE FUNCTION update_boards_updated_at();
+CREATE TRIGGER mc_boards_updated_at
+  BEFORE UPDATE ON mc_boards
+  FOR EACH ROW EXECUTE FUNCTION update_mc_boards_updated_at();
 
--- ── tasks ─────────────────────────────────────────────────────────────────────
+-- ── mc_tasks ──────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS tasks (
+CREATE TABLE IF NOT EXISTS mc_tasks (
   id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  board_id        uuid        NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  board_id        uuid        NOT NULL REFERENCES mc_boards(id) ON DELETE CASCADE,
   user_id         uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   title           text        NOT NULL,
   description     text,
@@ -47,25 +48,25 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mc_tasks ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "tasks: owner read"   ON tasks FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "tasks: owner insert" ON tasks FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "tasks: owner update" ON tasks FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "tasks: owner delete" ON tasks FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "mc_tasks: owner read"   ON mc_tasks FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "mc_tasks: owner insert" ON mc_tasks FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "mc_tasks: owner update" ON mc_tasks FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "mc_tasks: owner delete" ON mc_tasks FOR DELETE USING (auth.uid() = user_id);
 
-CREATE OR REPLACE FUNCTION update_tasks_updated_at()
+CREATE OR REPLACE FUNCTION update_mc_tasks_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$;
 
-CREATE TRIGGER tasks_updated_at
-  BEFORE UPDATE ON tasks
-  FOR EACH ROW EXECUTE FUNCTION update_tasks_updated_at();
+CREATE TRIGGER mc_tasks_updated_at
+  BEFORE UPDATE ON mc_tasks
+  FOR EACH ROW EXECUTE FUNCTION update_mc_tasks_updated_at();
 
--- ── approval_requests ─────────────────────────────────────────────────────────
+-- ── mc_approval_requests ──────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS approval_requests (
+CREATE TABLE IF NOT EXISTS mc_approval_requests (
   id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   action_type text        NOT NULL,
@@ -78,26 +79,26 @@ CREATE TABLE IF NOT EXISTS approval_requests (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
-ALTER TABLE approval_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mc_approval_requests ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "approval_requests: owner read"   ON approval_requests FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "approval_requests: owner insert" ON approval_requests FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "approval_requests: owner update" ON approval_requests FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "approval_requests: owner delete" ON approval_requests FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "mc_approval_requests: owner read"   ON mc_approval_requests FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "mc_approval_requests: owner insert" ON mc_approval_requests FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "mc_approval_requests: owner update" ON mc_approval_requests FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "mc_approval_requests: owner delete" ON mc_approval_requests FOR DELETE USING (auth.uid() = user_id);
 
-CREATE OR REPLACE FUNCTION update_approval_requests_updated_at()
+CREATE OR REPLACE FUNCTION update_mc_approval_requests_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$;
 
-CREATE TRIGGER approval_requests_updated_at
-  BEFORE UPDATE ON approval_requests
-  FOR EACH ROW EXECUTE FUNCTION update_approval_requests_updated_at();
+CREATE TRIGGER mc_approval_requests_updated_at
+  BEFORE UPDATE ON mc_approval_requests
+  FOR EACH ROW EXECUTE FUNCTION update_mc_approval_requests_updated_at();
 
--- ── audit_events ──────────────────────────────────────────────────────────────
+-- ── mc_audit_events ───────────────────────────────────────────────────────────
 -- Append-only structured audit trail. No update/delete policies by design.
 
-CREATE TABLE IF NOT EXISTS audit_events (
+CREATE TABLE IF NOT EXISTS mc_audit_events (
   id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   instance_id uuid        REFERENCES instances(id) ON DELETE SET NULL,
@@ -108,12 +109,12 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 
 -- Index for efficient per-user queries ordered by time
-CREATE INDEX IF NOT EXISTS audit_events_user_id_created_at
-  ON audit_events (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS mc_audit_events_user_id_created_at
+  ON mc_audit_events (user_id, created_at DESC);
 
-ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mc_audit_events ENABLE ROW LEVEL SECURITY;
 
 -- Read-only for owners. Insert via service role (server-side only).
-CREATE POLICY "audit_events: owner read"   ON audit_events FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "audit_events: owner insert" ON audit_events FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "mc_audit_events: owner read"   ON mc_audit_events FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "mc_audit_events: owner insert" ON mc_audit_events FOR INSERT WITH CHECK (auth.uid() = user_id);
 -- No UPDATE or DELETE policies: audit log is immutable.

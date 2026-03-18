@@ -15,7 +15,7 @@
 export async function emitAudit(supabase, { userId, instanceId = null, eventType, actor = 'system', payload = {} }) {
   if (!supabase || !userId || !eventType) return;
   try {
-    await supabase.from('audit_events').insert({
+    await supabase.from('mc_audit_events').insert({
       user_id: userId,
       instance_id: instanceId || null,
       event_type: eventType,

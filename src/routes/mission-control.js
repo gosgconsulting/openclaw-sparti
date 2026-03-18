@@ -42,7 +42,7 @@ router.get('/api/overview', async (req, res) => {
   let openTasks = null;
   try {
     const { count } = await supabase
-      .from('tasks')
+      .from('mc_tasks')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
       .in('status', ['todo', 'in-progress']);
@@ -53,7 +53,7 @@ router.get('/api/overview', async (req, res) => {
   let pendingApprovals = null;
   try {
     const { count } = await supabase
-      .from('approval_requests')
+      .from('mc_approval_requests')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
       .eq('status', 'pending');
@@ -73,7 +73,7 @@ router.get('/api/overview', async (req, res) => {
   let recentAudit = [];
   try {
     const { data } = await supabase
-      .from('audit_events')
+      .from('mc_audit_events')
       .select('event_type,actor,payload,created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
@@ -89,7 +89,7 @@ router.get('/api/overview', async (req, res) => {
 router.get('/api/boards', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
   const { data, error } = await supabase
-    .from('boards')
+    .from('mc_boards')
     .select('id,name,description,status,created_at')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false });
@@ -103,7 +103,7 @@ router.post('/api/boards', async (req, res) => {
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
 
   const { data, error } = await supabase
-    .from('boards')
+    .from('mc_boards')
     .insert({ user_id: req.user.id, name: String(name).trim(), description: description ? String(description).trim() : null, status: 'active' })
     .select('id,name,description,status,created_at')
     .single();
@@ -122,7 +122,7 @@ router.patch('/api/boards/:id', async (req, res) => {
   if (status != null) updates.status = String(status).trim();
 
   const { data, error } = await supabase
-    .from('boards')
+    .from('mc_boards')
     .update(updates)
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
@@ -138,7 +138,7 @@ router.patch('/api/boards/:id', async (req, res) => {
 router.delete('/api/boards/:id', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
   const { error } = await supabase
-    .from('boards')
+    .from('mc_boards')
     .delete()
     .eq('id', req.params.id)
     .eq('user_id', req.user.id);
@@ -155,7 +155,7 @@ router.get('/api/boards/:boardId/tasks', async (req, res) => {
 
   // Verify board belongs to user
   const { data: board } = await supabase
-    .from('boards')
+    .from('mc_boards')
     .select('id')
     .eq('id', req.params.boardId)
     .eq('user_id', req.user.id)
@@ -163,7 +163,7 @@ router.get('/api/boards/:boardId/tasks', async (req, res) => {
   if (!board) return res.status(404).json({ error: 'Board not found' });
 
   const { data, error } = await supabase
-    .from('tasks')
+    .from('mc_tasks')
     .select('id,board_id,title,description,status,assignee_agent,tags,created_at')
     .eq('board_id', req.params.boardId)
     .eq('user_id', req.user.id)
@@ -179,7 +179,7 @@ router.post('/api/boards/:boardId/tasks', async (req, res) => {
 
   // Verify board belongs to user
   const { data: board } = await supabase
-    .from('boards')
+    .from('mc_boards')
     .select('id')
     .eq('id', req.params.boardId)
     .eq('user_id', req.user.id)
@@ -187,7 +187,7 @@ router.post('/api/boards/:boardId/tasks', async (req, res) => {
   if (!board) return res.status(404).json({ error: 'Board not found' });
 
   const { data, error } = await supabase
-    .from('tasks')
+    .from('mc_tasks')
     .insert({
       board_id: req.params.boardId,
       user_id: req.user.id,
@@ -216,7 +216,7 @@ router.patch('/api/tasks/:id', async (req, res) => {
   if (tags != null) updates.tags = Array.isArray(tags) ? tags.filter(Boolean) : [];
 
   const { data, error } = await supabase
-    .from('tasks')
+    .from('mc_tasks')
     .update(updates)
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
@@ -232,7 +232,7 @@ router.patch('/api/tasks/:id', async (req, res) => {
 router.delete('/api/tasks/:id', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
   const { error } = await supabase
-    .from('tasks')
+    .from('mc_tasks')
     .delete()
     .eq('id', req.params.id)
     .eq('user_id', req.user.id);
@@ -247,7 +247,7 @@ router.delete('/api/tasks/:id', async (req, res) => {
 router.get('/api/approvals', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
   const { data, error } = await supabase
-    .from('approval_requests')
+    .from('mc_approval_requests')
     .select('id,action_type,payload,status,decided_at,decided_by,created_at')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false })
@@ -262,7 +262,7 @@ router.post('/api/approvals', async (req, res) => {
   if (!action_type || !String(action_type).trim()) return res.status(400).json({ error: 'action_type is required' });
 
   const { data, error } = await supabase
-    .from('approval_requests')
+    .from('mc_approval_requests')
     .insert({
       user_id: req.user.id,
       action_type: String(action_type).trim(),
@@ -285,7 +285,7 @@ router.post('/api/approvals/:id/decide', async (req, res) => {
   }
 
   const { data, error } = await supabase
-    .from('approval_requests')
+    .from('mc_approval_requests')
     .update({
       status: decision,
       decided_at: new Date().toISOString(),
@@ -312,7 +312,7 @@ router.get('/api/audit', async (req, res) => {
   const eventType = req.query.event_type ? String(req.query.event_type) : null;
 
   let query = supabase
-    .from('audit_events')
+    .from('mc_audit_events')
     .select('id,event_type,actor,payload,instance_id,created_at')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false })
