@@ -6,10 +6,13 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
+- **Mission Control event wiring (2026-03-18)** — Bot actions now auto-emit to `mc_audit_events`. See Done section.
 - **Composio connector fixes (2026-03-19)** — Two bugs fixed: `google_super` ToolkitNotFound 404 and GitHub OAuth callback auth loop. See Done section.
 - **Mission Control v2 implemented (2026-03-18)** — Full dashboard matching openclaw-mission-control reference UI. Supabase migrations applied. 66/66 tests pass.
 - **Skills tab + bundled skills** — Skills tab added to dashboard. `composio-connect` and `polymarket-clob` skills are now bundled and auto-activated for every account on every boot.
+- **TOOLS.md now always overwritten on boot** — Bot will see all bundled skills (including `composio-connect`) in its system prompt after next gateway restart.
 - **Sparti Context feature implemented (2026-03-19)** — Bot can now read brands, agents, projects, copilot tools from the Sparti database and launch agents or trigger edge functions directly from chat.
+- **Prompts / shortcode system implemented (2026-03-19)** — `mc_prompts` table live. `/mission-control/api/prompts` CRUD + `/run` endpoint. `prompt-runner` and `skill-creator` skills bundled. Prompts panel in Mission Control UI. Bridge columns on `mc_agents` and `mc_boards`.
 
 ---
 
@@ -18,8 +21,20 @@ Active tasks, next steps, blockers, and verification notes.
 ### Mission Control (follow-up)
 
 - **Migration applied** ✅ — `mc_boards`, `mc_tasks`, `mc_approval_requests`, `mc_audit_events`, `mc_tags`, `mc_agents`, `mc_board_groups` all live in Supabase with RLS.
-- **Wire `emitAudit` into gateway actions** — Add `emitAudit` calls in `server.js` for gateway start/stop/restart (`/lite/api/gateway/*`) and channel save (`POST /dashboard/channels/:name`) to complete the audit trail.
+- **Gateway audit wired** ✅ — `gateway.started`, `gateway.stopped`, `gateway.restarted` now emit to `mc_audit_events`.
+- **Install `mission-control-events` skill** — Copy `skills/mission-control-events/` to the OpenClaw gateway's skills directory so the bot can push raw message/session events. Without it, only server-side actions (agent launch, edge functions, gateway control) are tracked automatically.
+- **Wire channel save audit** — Add `emitAudit` to `POST /dashboard/channels/:name` so channel config changes appear in the audit trail.
 - **Phase 0 (server.js split)** — `server.js` is ~2500 lines. Split into `src/routes/auth.js`, `src/routes/onboard.js`, `src/routes/lite.js`, `src/routes/dashboard.js`, `src/routes/openclaw.js`. Extract `src/config-bootstrap.js` and `src/backup.js`.
+
+### Prompts / Shortcodes (follow-up)
+
+- **Apply migration** ✅ — `mc_prompts` table + bridge columns on `mc_agents`/`mc_boards` applied to Supabase.
+- **Install `prompt-runner` skill** — Copy `skills/prompt-runner/` to the OpenClaw gateway's skills directory. Once active, the bot will intercept `/slug` messages automatically.
+- **Install `skill-creator` skill** — Copy `skills/skill-creator/` to the gateway's skills directory. Once active, the user can say "save this as /shortcode" to create prompts from chat.
+- **Test `/project-doc-planner`**: create a prompt with slug `project-doc-planner`, type `/project-doc-planner` in the bot → bot should call `/mission-control/api/prompts/project-doc-planner/run` and execute the workflow.
+- **Test skill creation from chat**: say "save /seo-agent that launches agent X for brand Y" → bot should call `POST /mission-control/api/prompts` and confirm.
+- **Mission Control Prompts panel**: visit `/mission-control#prompts` → should list prompts, allow create/edit/delete.
+- **Bridge columns**: when creating a board, optionally link it to a Sparti brand or project via `sparti_brand_id`/`sparti_project_id`. When creating an agent, link it to a real Sparti agent via `sparti_agent_id`/`sparti_agent_source`.
 
 ### Sparti Context (follow-up)
 
@@ -63,6 +78,21 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Done
 
+- **Prompts / shortcode system (2026-03-19):**
+  - `supabase/migrations/20260319_mc_prompts_and_bridges.sql` — `mc_prompts` table (RLS, unique slug per user, usage tracking) + bridge columns on `mc_agents`/`mc_boards`. Migration applied to Supabase.
+  - `src/routes/mission-control.js` — Added prompts CRUD + `POST /api/prompts/:slug/run` (returns dispatch instructions). `mc_agents` GET enriches with real Sparti agent data. Boards/agents POST+PATCH accept bridge columns.
+  - `skills/prompt-runner/SKILL.md` + `_meta.json` — Bot skill that intercepts `/slug` messages and executes saved prompts.
+  - `skills/skill-creator/SKILL.md` + `_meta.json` — Bot skill that lets users save new prompts from chat and generate skill files.
+  - `src/mission-control-page.js` — Prompts panel with table, create/edit/delete modal, type selector, JSON payload editor, type hints. "Automation" nav section added.
+  - `README.md` — Prompts/Shortcodes API section + updated Pre-bundled Skills table.
+
+- **Mission Control event wiring (2026-03-18):**
+  - `src/routes/sparti-context.js` — Added `emitAudit` import. Now emits `bot.agent.launched`, `bot.agent.chat`, `bot.edge_function.invoked`, `bot.edge_function.failed` automatically on every corresponding API call — zero bot config needed.
+  - `src/server.js` — Imported `emitAudit`. Gateway start/stop/restart routes now emit `gateway.started`, `gateway.stopped`, `gateway.restarted` to `mc_audit_events` via service-role client.
+  - `src/server.js` — Added `POST /api/mc/events` endpoint (SETUP_PASSWORD Bearer auth). Bot skill or any internal caller can push arbitrary events with `{ user_id, event_type, actor, payload }`.
+  - `skills/mission-control-events/SKILL.md` + `_meta.json` — Bot skill teaching OpenClaw when and how to push events, standard event type table, auto-emitted events list, error handling.
+  - 66/66 tests pass.
+
 - **Sparti Context feature (2026-03-19):**
   - `src/routes/sparti-context.js` — Express router at `/api/sparti/*` (12 endpoints, all `requireUser()`). Reads `brands`, `ai_agents`, `custom_agents`, `projects`, `copilot_instances`, `copilot_templates`, `app_tools` from Sparti DB using user's access token (RLS-scoped). Exposes agent launch + chat via `llmgateway-chat` edge fn. Exposes generic edge function invocation at `POST /api/sparti/edge/:slug`.
   - `skills/sparti-context/SKILL.md` + `_meta.json` — Bot skill teaching OpenClaw to use all Sparti context endpoints, including agent launch/chat workflows and edge function triggers (project-doc-planner, content-writing-workflow, etc.).
@@ -96,6 +126,14 @@ Active tasks, next steps, blockers, and verification notes.
   - `server.js` — `GET /` redirects authenticated → `/mission-control`, unauthenticated → `/auth`. Mounted `missionControlRouter`.
   - `dashboard-page.js` — Added "⚡ Mission Control" link to actions bar.
   - Tests: 66/66 pass. No regressions.
+
+- **TOOLS.md always-overwrite fix (2026-03-19):**
+  - Root cause: TOOLS.md was written only once (`if (!existsSync(toolsPath))`). On existing deployments it was already written before `composio-connect` was added — so the bot's system prompt never mentioned the skill existed. Bot had no awareness to use it.
+  - Fix: removed the `if (!existsSync)` guard — TOOLS.md is now **always overwritten** on every gateway start, so new bundled skills are always reflected.
+  - Added explicit `## Composio Connect Links` section to TOOLS.md — tells the bot to use `composio-connect` skill when user asks to connect any app, and to NOT give manual instructions.
+  - Added `## Polymarket CLOB API` section to TOOLS.md.
+  - Added dynamic `## Additional Skills` section listing any other installed skills.
+  - **To activate on existing deployment**: restart the gateway from `/lite` → gateway will rewrite TOOLS.md with all skill sections → bot will know to use `composio-connect` on next conversation.
 
 - **Skills tab + bundled skills auto-activation (2026-03-19):**
   - Created `skills/polymarket-clob/SKILL.md` + `_meta.json` — geoblock guardrail for Polymarket CLOB API. Routes order placement through `POLYMARKET_PROXY_URL` when set; blocks and informs user when not set. Read-only market data always works.

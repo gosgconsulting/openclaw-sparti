@@ -1,0 +1,8 @@
+{
+  "name": "mission-control-events",
+  "version": "1.0.0",
+  "description": "Push events from the bot into Mission Control's Live Feed and audit trail.",
+  "category": "operations",
+  "risk": "safe",
+  "enabled": true
+}

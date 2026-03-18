@@ -697,6 +697,9 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     <div class="nav-item" data-panel="marketplace"><span class="nav-icon">⊕</span> Marketplace</div>
     <div class="nav-item" data-panel="packs"><span class="nav-icon">⊟</span> Packs</div>
 
+    <div class="nav-section-label">Automation</div>
+    <div class="nav-item" data-panel="prompts"><span class="nav-icon">⚡</span> Prompts</div>
+
     <div class="nav-section-label">Administration</div>
     <div class="nav-item" data-panel="organization"><span class="nav-icon">⊞</span> Organization</div>
     <div class="nav-item" data-panel="gateways"><span class="nav-icon">⊞</span> Gateways</div>
@@ -972,6 +975,22 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       <div id="agents-list"><span class="spinner"></span></div>
     </div>
 
+    <!-- Prompts -->
+    <div id="panel-prompts" class="panel">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div class="page-title">Prompts</div>
+          <div class="page-sub">Saved /shortcodes — launch agents, run workflows, and trigger edge functions from the bot.</div>
+        </div>
+        <button class="btn btn-primary" onclick="openPromptModal()">+ New prompt</button>
+      </div>
+      <div id="prompts-tip" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#0369a1;">
+        <strong>How it works:</strong> Save a workflow, agent launch, or edge function as a <code>/shortcode</code>. Then type <code>/shortcode</code> in the bot to run it instantly.
+        <br>Example: <code>/project-doc-planner</code> → runs the project-doc-planner workflow.
+      </div>
+      <div id="prompts-list"><span class="spinner"></span></div>
+    </div>
+
   </main>
 
   <!-- ── Board Modal ── -->
@@ -1100,6 +1119,41 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     </div>
   </div>
 
+  <!-- ── Prompt Modal ── -->
+  <div class="modal-backdrop" id="prompt-modal">
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-header">
+        <div class="modal-title" id="prompt-modal-title">New Prompt</div>
+        <button class="modal-close" onclick="closeModal('prompt-modal')">✕</button>
+      </div>
+      <input type="hidden" id="prompt-modal-slug"/>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="field"><label>Name *</label><input id="prompt-name" type="text" placeholder="e.g. SEO Agent"/></div>
+        <div class="field"><label>Shortcode * <span style="color:#64748b;font-weight:400;">(no /)</span></label><input id="prompt-slug" type="text" placeholder="e.g. seo-agent"/></div>
+      </div>
+      <div class="field"><label>Description</label><input id="prompt-desc" type="text" placeholder="What does this prompt do?"/></div>
+      <div class="field"><label>Type</label>
+        <select id="prompt-type" onchange="onPromptTypeChange()">
+          <option value="workflow">Workflow — run a Supabase edge function workflow</option>
+          <option value="agent_launch">Agent Launch — start a conversation with a Sparti agent</option>
+          <option value="chat">Chat — send a message to a Sparti agent</option>
+          <option value="edge_fn">Edge Function — call any Supabase edge function</option>
+          <option value="composite">Composite — run multiple steps in sequence</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Payload <span style="color:#64748b;font-weight:400;">(JSON)</span></label>
+        <textarea id="prompt-payload" rows="6" placeholder='{"edge_fn_slug":"workflow-ai","workflow":"project-doc-planner"}'
+          style="font-family:monospace;font-size:12px;"></textarea>
+        <div id="prompt-payload-hint" style="font-size:11px;color:#64748b;margin-top:4px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('prompt-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="savePrompt()">Save prompt</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Group Modal ── -->
   <div class="modal-backdrop" id="group-modal">
     <div class="modal">
@@ -1163,6 +1217,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       if (name === 'marketplace') loadMarketplace();
       if (name === 'gateways') loadGateway();
       if (name === 'agents') loadAgents();
+      if (name === 'prompts') loadPrompts();
     }
     navItems.forEach(n => n.addEventListener('click', () => setPanel(n.dataset.panel)));
 
@@ -1911,9 +1966,113 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
     }
 
+    // ── Prompts ─────────────────────────────────────────────────────────────────
+    const PROMPT_TYPE_HINTS = {
+      workflow: '{"edge_fn_slug":"workflow-ai","workflow":"project-doc-planner","brand_id":"optional-uuid"}',
+      agent_launch: '{"agent_id":"uuid","brand_id":"optional-uuid","project_id":"optional-uuid","message":"optional initial message"}',
+      chat: '{"agent_id":"uuid","message":"default message","brand_id":"optional-uuid"}',
+      edge_fn: '{"edge_fn_slug":"brand-voice-profile","brand_id":"optional-uuid"}',
+      composite: '{"steps":[{"type":"edge_fn","edge_fn_slug":"brand-voice-profile"},{"type":"agent_launch","agent_id":"uuid"}]}',
+    };
+
+    function onPromptTypeChange() {
+      const type = document.getElementById('prompt-type').value;
+      const hint = document.getElementById('prompt-payload-hint');
+      const ta = document.getElementById('prompt-payload');
+      hint.textContent = 'Example: ' + (PROMPT_TYPE_HINTS[type] || '{}');
+      if (!ta.value.trim() || ta.value === '{}') {
+        ta.placeholder = PROMPT_TYPE_HINTS[type] || '{}';
+      }
+    }
+
+    async function loadPrompts() {
+      const el = document.getElementById('prompts-list');
+      el.innerHTML = '<span class="spinner"></span>';
+      try {
+        const { prompts } = await api('GET', '/mission-control/api/prompts');
+        const sub = document.getElementById('agents-sub');
+        if (!prompts.length) {
+          el.innerHTML = \`<div style="color:#94a3b8;padding:32px;text-align:center;">
+            No prompts yet. Create one with <strong>+ New prompt</strong> or ask the bot to <strong>save this as /shortcode</strong>.
+          </div>\`;
+          return;
+        }
+        const typeColors = { workflow:'#7c3aed', agent_launch:'#0891b2', chat:'#059669', edge_fn:'#d97706', composite:'#dc2626' };
+        el.innerHTML = \`<table class="data-table" style="width:100%;">
+          <thead><tr>
+            <th>Shortcode</th><th>Name</th><th>Type</th><th>Description</th><th>Uses</th><th>Last used</th><th></th>
+          </tr></thead>
+          <tbody>\${prompts.map(p => \`<tr>
+            <td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;">/${p.slug}</code></td>
+            <td style="font-weight:500;">\${esc(p.name)}</td>
+            <td><span style="background:\${typeColors[p.type]||'#64748b'}22;color:\${typeColors[p.type]||'#64748b'};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">\${p.type}</span></td>
+            <td style="color:#64748b;font-size:13px;">\${esc(p.description||'')}</td>
+            <td style="color:#64748b;font-size:13px;">\${p.usage_count||0}</td>
+            <td style="color:#64748b;font-size:12px;">\${p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : '—'}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="editPrompt(\${JSON.stringify(p).replace(/"/g,'&quot;')})">Edit</button>
+              <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;color:#ef4444;" onclick="deletePrompt('${p.slug}')">Delete</button>
+            </td>
+          </tr>\`).join('')}
+          </tbody>
+        </table>\`;
+      } catch (err) { el.innerHTML = \`<div style="color:#ef4444;">Error: \${err.message}</div>\`; }
+    }
+
+    function openPromptModal(prompt) {
+      document.getElementById('prompt-modal-title').textContent = prompt ? 'Edit Prompt' : 'New Prompt';
+      document.getElementById('prompt-modal-slug').value = prompt ? prompt.slug : '';
+      document.getElementById('prompt-name').value = prompt ? prompt.name : '';
+      document.getElementById('prompt-slug').value = prompt ? prompt.slug : '';
+      document.getElementById('prompt-slug').disabled = !!prompt;
+      document.getElementById('prompt-desc').value = prompt ? (prompt.description || '') : '';
+      document.getElementById('prompt-type').value = prompt ? prompt.type : 'workflow';
+      document.getElementById('prompt-payload').value = prompt ? JSON.stringify(prompt.payload, null, 2) : '';
+      onPromptTypeChange();
+      openModal('prompt-modal');
+    }
+
+    function editPrompt(p) { openPromptModal(p); }
+
+    async function savePrompt() {
+      const existingSlug = document.getElementById('prompt-modal-slug').value;
+      const name = document.getElementById('prompt-name').value.trim();
+      const slug = document.getElementById('prompt-slug').value.trim();
+      const description = document.getElementById('prompt-desc').value.trim();
+      const type = document.getElementById('prompt-type').value;
+      const payloadRaw = document.getElementById('prompt-payload').value.trim();
+      if (!name) return showFlash('Name is required', 'error');
+      if (!existingSlug && !slug) return showFlash('Shortcode is required', 'error');
+      let payload = {};
+      if (payloadRaw) {
+        try { payload = JSON.parse(payloadRaw); }
+        catch { return showFlash('Payload must be valid JSON', 'error'); }
+      }
+      try {
+        if (existingSlug) {
+          await api('PATCH', \`/mission-control/api/prompts/\${existingSlug}\`, { name, description, type, payload });
+          showFlash('Prompt updated.');
+        } else {
+          await api('POST', '/mission-control/api/prompts', { name, slug, description, type, payload });
+          showFlash(\`Prompt /\${slug} saved. Type it in the bot to run it.\`);
+        }
+        closeModal('prompt-modal');
+        loadPrompts();
+      } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
+    }
+
+    async function deletePrompt(slug) {
+      if (!confirm(\`Delete /\${slug}?\`)) return;
+      try {
+        await api('DELETE', \`/mission-control/api/prompts/\${slug}\`);
+        showFlash('Prompt deleted.');
+        loadPrompts();
+      } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
+    }
+
     // ── Init ───────────────────────────────────────────────────────────────────
     const hash = location.hash.replace('#', '');
-    const validPanels = ['dashboard','live-feed','board-groups','boards','kanban','tags','approvals','custom-fields','marketplace','packs','organization','gateways','agents'];
+    const validPanels = ['dashboard','live-feed','board-groups','boards','kanban','tags','approvals','custom-fields','marketplace','packs','organization','gateways','agents','prompts'];
     if (hash && validPanels.includes(hash)) {
       setPanel(hash);
     } else {

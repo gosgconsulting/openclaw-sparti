@@ -35,6 +35,7 @@ import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies, getSupabaseTokensFromRequest } from './auth-supabase.js';
 import missionControlRouter from './routes/mission-control.js';
 import spartiContextRouter from './routes/sparti-context.js';
+import { emitAudit } from './audit.js';
 import {
   listComposioApps,
   generateConnectLink,
@@ -562,6 +563,41 @@ app.get('/', requireUser(), (req, res) => {
 
 // Mission Control
 app.use('/mission-control', missionControlRouter);
+
+// Mission Control event push — bot skill calls this to record arbitrary events in the audit trail.
+// Protected by SETUP_PASSWORD Bearer token (same as other bot-facing endpoints).
+// The bot does NOT need a Supabase session; it uses the shared SETUP_PASSWORD.
+// A x-user-id header (or query param) identifies which user's audit log to write to.
+app.post('/api/mc/events', express.json(), async (req, res) => {
+  // Auth: SETUP_PASSWORD Bearer token
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const SETUP_PASSWORD = process.env.SETUP_PASSWORD || '';
+  if (!SETUP_PASSWORD || token !== SETUP_PASSWORD) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { event_type, actor, payload, user_id } = req.body || {};
+  const userId = user_id || req.headers['x-user-id'] || null;
+
+  if (!event_type || !userId) {
+    return res.status(400).json({ error: 'event_type and user_id are required' });
+  }
+
+  const adminSb = createSupabaseAdminClient();
+  if (!adminSb) {
+    return res.status(503).json({ error: 'Supabase admin client not available — check SUPABASE_SERVICE_ROLE_KEY' });
+  }
+
+  await emitAudit(adminSb, {
+    userId,
+    eventType: String(event_type).trim(),
+    actor: actor ? String(actor).trim() : 'bot',
+    payload: payload && typeof payload === 'object' ? payload : {},
+  });
+
+  return res.json({ ok: true });
+});
 
 // Sparti Context — brands, agents, projects, copilot tools, agent launch, edge fn invocation
 app.use('/api/sparti', spartiContextRouter);
@@ -1817,6 +1853,12 @@ app.get('/lite/api/logs', wrapperAuth, (req, res) => {
 app.post('/lite/api/gateway/start', wrapperAuth, async (req, res) => {
   try {
     await startGateway();
+    // Emit to Mission Control audit trail — best-effort, non-blocking
+    const adminSb = createSupabaseAdminClient();
+    if (adminSb) {
+      const userId = req.user?.id || req.headers['x-user-id'] || null;
+      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.started', actor: req.user?.email || 'operator', payload: {} });
+    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1827,6 +1869,11 @@ app.post('/lite/api/gateway/start', wrapperAuth, async (req, res) => {
 app.post('/lite/api/gateway/stop', wrapperAuth, async (req, res) => {
   try {
     await stopGateway();
+    const adminSb = createSupabaseAdminClient();
+    if (adminSb) {
+      const userId = req.user?.id || req.headers['x-user-id'] || null;
+      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.stopped', actor: req.user?.email || 'operator', payload: {} });
+    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1840,6 +1887,11 @@ app.post('/lite/api/gateway/restart', wrapperAuth, async (req, res) => {
       await stopGateway();
     }
     await startGateway();
+    const adminSb = createSupabaseAdminClient();
+    if (adminSb) {
+      const userId = req.user?.id || req.headers['x-user-id'] || null;
+      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.restarted', actor: req.user?.email || 'operator', payload: {} });
+    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

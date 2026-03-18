@@ -22,12 +22,38 @@
  */
 
 import { Router } from 'express';
-import { requireUser } from '../auth-supabase.js';
-import { createSupabaseClient } from '../supabase.js';
+import { requireUserOrBot } from '../auth-supabase.js';
+import { createSupabaseClient, createSupabaseAdminClient } from '../supabase.js';
+import { emitAudit } from '../audit.js';
 
 const router = Router();
 
-router.use(requireUser());
+router.use(requireUserOrBot());
+
+/**
+ * Returns a Supabase client scoped to the current request.
+ * - Browser sessions: RLS-scoped user client (access token from cookie)
+ * - Bot sessions (SETUP_PASSWORD + x-user-id): service-role admin client
+ *   so queries bypass RLS but are still filtered by user_id where needed.
+ */
+function getSupabaseForRequest(req) {
+  if (req.isBotAuth) {
+    return createSupabaseAdminClient();
+  }
+  return createSupabaseClient({ accessToken: req.supabaseAccessToken });
+}
+
+/**
+ * When the bot uses the admin client (no RLS), we must manually filter by
+ * user_id to prevent cross-user data leakage.
+ * Returns the query unchanged for browser sessions (RLS handles it).
+ */
+function scopeToUser(query, req) {
+  if (req.isBotAuth) {
+    return query.eq('user_id', req.user.id);
+  }
+  return query;
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -76,22 +102,27 @@ async function callEdgeFunction(slug, body, userAccessToken) {
 // ── Brands ────────────────────────────────────────────────────────────────────
 
 router.get('/brands', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { data, error } = await supabase
-    .from('brands')
-    .select('id,name,description,logo_url,industry,brand_voice,website,country,language,created_at')
-    .order('created_at', { ascending: false });
+  const supabase = getSupabaseForRequest(req);
+  const { data, error } = await scopeToUser(
+    supabase
+      .from('brands')
+      .select('id,name,description,logo_url,industry,brand_voice,website,country,language,created_at')
+      .order('created_at', { ascending: false }),
+    req,
+  );
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ brands: data || [] });
 });
 
 router.get('/brands/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { data, error } = await supabase
-    .from('brands')
-    .select('id,name,description,logo_url,industry,brand_voice,website,country,language,key_selling_points,colors,typography,created_at,updated_at')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const supabase = getSupabaseForRequest(req);
+  const { data, error } = await scopeToUser(
+    supabase
+      .from('brands')
+      .select('id,name,description,logo_url,industry,brand_voice,website,country,language,key_selling_points,colors,typography,created_at,updated_at')
+      .eq('id', req.params.id),
+    req,
+  ).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Brand not found' });
   return res.json({ brand: data });
@@ -104,17 +135,23 @@ router.get('/brands/:id', async (req, res) => {
  * Both tables are RLS-scoped to the authenticated user.
  */
 router.get('/agents', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getSupabaseForRequest(req);
 
   const [aiResult, customResult] = await Promise.all([
-    supabase
-      .from('ai_agents')
-      .select('id,name,instructions,workspace_id,is_active,usage_count,last_used_at,created_at')
-      .order('name', { ascending: true }),
-    supabase
-      .from('custom_agents')
-      .select('id,name,description,icon,category,instructions,is_active,usage_count,last_used_at,created_at')
-      .order('name', { ascending: true }),
+    scopeToUser(
+      supabase
+        .from('ai_agents')
+        .select('id,name,instructions,workspace_id,is_active,usage_count,last_used_at,created_at')
+        .order('name', { ascending: true }),
+      req,
+    ),
+    scopeToUser(
+      supabase
+        .from('custom_agents')
+        .select('id,name,description,icon,category,instructions,is_active,usage_count,last_used_at,created_at')
+        .order('name', { ascending: true }),
+      req,
+    ),
   ]);
 
   const agents = [
@@ -127,22 +164,26 @@ router.get('/agents', async (req, res) => {
 });
 
 router.get('/agents/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getSupabaseForRequest(req);
 
   // Try ai_agents first, then custom_agents
-  const { data: aiAgent } = await supabase
-    .from('ai_agents')
-    .select('id,name,instructions,questions,workspace_id,is_active,usage_count,last_used_at,created_at,updated_at')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const { data: aiAgent } = await scopeToUser(
+    supabase
+      .from('ai_agents')
+      .select('id,name,instructions,questions,workspace_id,is_active,usage_count,last_used_at,created_at,updated_at')
+      .eq('id', req.params.id),
+    req,
+  ).maybeSingle();
 
   if (aiAgent) return res.json({ agent: { ...aiAgent, source: 'ai_agents' } });
 
-  const { data: customAgent, error } = await supabase
-    .from('custom_agents')
-    .select('id,name,description,icon,category,instructions,questions,is_active,usage_count,last_used_at,created_at,updated_at')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const { data: customAgent, error } = await scopeToUser(
+    supabase
+      .from('custom_agents')
+      .select('id,name,description,icon,category,instructions,questions,is_active,usage_count,last_used_at,created_at,updated_at')
+      .eq('id', req.params.id),
+    req,
+  ).maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
   if (!customAgent) return res.status(404).json({ error: 'Agent not found' });
@@ -152,22 +193,27 @@ router.get('/agents/:id', async (req, res) => {
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 router.get('/projects', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { data, error } = await supabase
-    .from('projects')
-    .select('id,title,description,type,status,brand_id,is_active,created_at,updated_at')
-    .order('created_at', { ascending: false });
+  const supabase = getSupabaseForRequest(req);
+  const { data, error } = await scopeToUser(
+    supabase
+      .from('projects')
+      .select('id,title,description,type,status,brand_id,is_active,created_at,updated_at')
+      .order('created_at', { ascending: false }),
+    req,
+  );
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ projects: data || [] });
 });
 
 router.get('/projects/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { data, error } = await supabase
-    .from('projects')
-    .select('id,title,description,type,content,status,brand_id,global_prompt,project_knowledge,is_active,created_at,updated_at')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const supabase = getSupabaseForRequest(req);
+  const { data, error } = await scopeToUser(
+    supabase
+      .from('projects')
+      .select('id,title,description,type,content,status,brand_id,global_prompt,project_knowledge,is_active,created_at,updated_at')
+      .eq('id', req.params.id),
+    req,
+  ).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Project not found' });
   return res.json({ project: data });
@@ -180,13 +226,16 @@ router.get('/projects/:id', async (req, res) => {
  * copilot_templates (available templates), and app_tools (platform tools).
  */
 router.get('/copilot-tools', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getSupabaseForRequest(req);
 
   const [instancesResult, templatesResult, appToolsResult] = await Promise.all([
-    supabase
-      .from('copilot_instances')
-      .select('id,name,status,template_id,brand_id,created_at,updated_at')
-      .order('created_at', { ascending: false }),
+    scopeToUser(
+      supabase
+        .from('copilot_instances')
+        .select('id,name,status,template_id,brand_id,created_at,updated_at')
+        .order('created_at', { ascending: false }),
+      req,
+    ),
     supabase
       .from('copilot_templates')
       .select('id,name,slug,description,base_copilot_type,is_template,created_at')
@@ -207,12 +256,14 @@ router.get('/copilot-tools', async (req, res) => {
 });
 
 router.get('/copilot-tools/instances/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { data, error } = await supabase
-    .from('copilot_instances')
-    .select('id,name,status,template_id,brand_id,custom_configuration,custom_prompts,created_at,updated_at')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const supabase = getSupabaseForRequest(req);
+  const { data, error } = await scopeToUser(
+    supabase
+      .from('copilot_instances')
+      .select('id,name,status,template_id,brand_id,custom_configuration,custom_prompts,created_at,updated_at')
+      .eq('id', req.params.id),
+    req,
+  ).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Copilot instance not found' });
   return res.json({ instance: data });
@@ -278,7 +329,7 @@ router.get('/edge-functions', (req, res) => {
  * Returns: { session_id?, reply, agent }
  */
 router.post('/agents/:id/launch', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getSupabaseForRequest(req);
   const { message, brand_id, project_id, model } = req.body || {};
 
   // Load agent
@@ -348,6 +399,13 @@ router.post('/agents/:id/launch', async (req, res) => {
       agent_name: agent.name,
     }, req.supabaseAccessToken);
 
+    emitAudit(supabase, {
+      userId: req.user.id,
+      eventType: 'bot.agent.launched',
+      actor: req.user.email || req.user.id,
+      payload: { agentId: agent.id, agentName: agent.name, brand_id: brand_id || null, project_id: project_id || null },
+    });
+
     return res.json({
       agent: { id: agent.id, name: agent.name },
       reply: result?.reply || result?.content || result?.message || result,
@@ -366,7 +424,7 @@ router.post('/agents/:id/launch', async (req, res) => {
  * Returns: { reply, agent }
  */
 router.post('/agents/:id/chat', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getSupabaseForRequest(req);
   const { message, history, brand_id, project_id, model } = req.body || {};
   if (!message || !String(message).trim()) {
     return res.status(400).json({ error: 'message is required' });
@@ -435,6 +493,13 @@ router.post('/agents/:id/chat', async (req, res) => {
       agent_name: agent.name,
     }, req.supabaseAccessToken);
 
+    emitAudit(supabase, {
+      userId: req.user.id,
+      eventType: 'bot.agent.chat',
+      actor: req.user.email || req.user.id,
+      payload: { agentId: agent.id, agentName: agent.name, messageLength: String(message).trim().length, brand_id: brand_id || null },
+    });
+
     return res.json({
       agent: { id: agent.id, name: agent.name },
       reply: result?.reply || result?.content || result?.message || result,
@@ -460,10 +525,23 @@ router.post('/edge/:slug', async (req, res) => {
     return res.status(400).json({ error: 'Invalid edge function slug' });
   }
 
+  const supabase = getSupabaseForRequest(req);
   try {
     const result = await callEdgeFunction(slug, req.body || {}, req.supabaseAccessToken);
+    emitAudit(supabase, {
+      userId: req.user.id,
+      eventType: 'bot.edge_function.invoked',
+      actor: req.user.email || req.user.id,
+      payload: { slug, body: req.body || {} },
+    });
     return res.json({ ok: true, result });
   } catch (err) {
+    emitAudit(supabase, {
+      userId: req.user.id,
+      eventType: 'bot.edge_function.failed',
+      actor: req.user.email || req.user.id,
+      payload: { slug, error: err.message },
+    });
     return res.status(502).json({ error: err.message });
   }
 });
@@ -476,7 +554,7 @@ router.post('/edge/:slug', async (req, res) => {
  * Useful for the bot to give a quick overview.
  */
 router.get('/summary', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getSupabaseForRequest(req);
 
   const [brands, aiAgents, customAgents, projects, copilotInstances, appTools] = await Promise.all([
     supabase.from('brands').select('id', { count: 'exact', head: true }),

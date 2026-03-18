@@ -89,3 +89,41 @@ export function requireUser() {
   };
 }
 
+/**
+ * Middleware that accepts either:
+ *   1. A Supabase session cookie (browser / dashboard flows) — same as requireUser()
+ *   2. SETUP_PASSWORD Bearer token + x-user-id header (bot / skill flows)
+ *
+ * When the bot path is used:
+ *   - req.user      = { id: <x-user-id value>, email: 'bot' }
+ *   - req.supabaseAccessToken = null  (callers must use createSupabaseAdminClient())
+ *   - req.isBotAuth = true            (so routes can switch to service-role client)
+ *
+ * This lets the sparti-context skill call /api/sparti/* with only SETUP_PASSWORD
+ * and a user ID, without needing a live Supabase browser session.
+ */
+export function requireUserOrBot() {
+  const userMiddleware = requireUser();
+
+  return async (req, res, next) => {
+    // Check for SETUP_PASSWORD Bearer token first (bot path)
+    const authHeader = req.headers.authorization || '';
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const SETUP_PASSWORD = (process.env.SETUP_PASSWORD || '').toString();
+
+    if (bearerToken && SETUP_PASSWORD && bearerToken === SETUP_PASSWORD) {
+      const userId = (req.headers['x-user-id'] || '').toString().trim();
+      if (!userId) {
+        return res.status(400).json({ error: 'x-user-id header is required when authenticating with SETUP_PASSWORD' });
+      }
+      req.user = { id: userId, email: 'bot' };
+      req.supabaseAccessToken = null;
+      req.isBotAuth = true;
+      return next();
+    }
+
+    // Fall back to standard Supabase session cookie auth
+    return userMiddleware(req, res, next);
+  };
+}
+

@@ -1,0 +1,7 @@
+{
+  "name": "prompt-runner",
+  "version": "1.0.0",
+  "description": "Intercept /shortcode messages and execute saved Mission Control prompts — workflows, agent launches, edge functions, and composite steps.",
+  "author": "openclaw-sparti",
+  "tags": ["prompts", "shortcuts", "workflows", "agents", "edge-functions", "mission-control"]
+}

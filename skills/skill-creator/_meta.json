@@ -1,0 +1,7 @@
+{
+  "name": "skill-creator",
+  "version": "1.0.0",
+  "description": "Save workflows, agent launches, edge functions, and chat prompts as named /shortcodes directly from the bot. Also lets you create OpenClaw skills from chat.",
+  "author": "openclaw-sparti",
+  "tags": ["skills", "prompts", "shortcuts", "workflows", "creator", "mission-control"]
+}

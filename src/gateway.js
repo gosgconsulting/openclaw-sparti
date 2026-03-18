@@ -475,9 +475,11 @@ export async function startGateway() {
 
   // Write TOOLS.md with environment-specific tool notes.
   // TOOLS.md is injected into the system prompt for all agents + sub-agents,
-  // ensuring consistent tool awareness (browser, SearXNG, shell, etc.).
-  const toolsPath = join(workspaceDir, 'TOOLS.md');
-  if (!existsSync(toolsPath)) {
+  // ensuring consistent tool awareness (browser, SearXNG, shell, skills, etc.).
+  // Always overwritten so new bundled skills are reflected on every boot —
+  // never skip-if-exists, because new skills added after first boot would be invisible.
+  {
+    const toolsPath = join(workspaceDir, 'TOOLS.md');
     let toolsContent = '# Tools\n\n';
 
     if (chromeBinary) {
@@ -501,10 +503,47 @@ export async function startGateway() {
 
     toolsContent +=
       '## Shell\n\n' +
-      'Shell execution (`exec` tool) is available for running commands like `curl`, `node`, `python3`, etc.\n';
+      'Shell execution (`exec` tool) is available for running commands like `curl`, `node`, `python3`, etc.\n\n';
+
+    // Composio connect-link skill — lets the bot generate OAuth links in chat
+    if (existsSync(join(stateDir, 'skills', 'composio-connect'))) {
+      toolsContent +=
+        '## Composio Connect Links\n\n' +
+        'You can generate Composio OAuth Connect Links directly in chat using the `composio-connect` skill. ' +
+        'When a user asks to connect Slack, GitHub, Google, or any other app via Composio, ' +
+        'use this skill — do NOT give manual instructions. ' +
+        'Read `composio-connect/SKILL.md` for the exact curl command and toolkit key reference.\n\n';
+    }
+
+    // Polymarket CLOB guardrail
+    if (existsSync(join(stateDir, 'skills', 'polymarket-clob'))) {
+      toolsContent +=
+        '## Polymarket CLOB API\n\n' +
+        'This server runs on US infrastructure. Polymarket blocks order placement (POST /order) from US IPs. ' +
+        'Read `polymarket-clob/SKILL.md` before making any CLOB write calls — it explains how to route through a proxy or inform the user.\n\n';
+    }
+
+    // List any other installed skills so the bot knows they exist
+    const skillsOnDisk = join(stateDir, 'skills');
+    const knownSkills = new Set(['searxng-local', 'composio-connect', 'polymarket-clob']);
+    if (existsSync(skillsOnDisk)) {
+      const otherSkills = readdirSync(skillsOnDisk).filter(d => {
+        if (knownSkills.has(d)) return false;
+        const p = join(skillsOnDisk, d);
+        return lstatSync(p).isDirectory() && existsSync(join(p, 'SKILL.md'));
+      });
+      if (otherSkills.length > 0) {
+        toolsContent += '## Additional Skills\n\n';
+        toolsContent += 'The following skills are also installed. Read their SKILL.md for usage instructions:\n\n';
+        for (const s of otherSkills) {
+          toolsContent += `- \`${s}\`\n`;
+        }
+        toolsContent += '\n';
+      }
+    }
 
     writeFileSync(toolsPath, toolsContent, 'utf8');
-    console.log('Wrote default TOOLS.md with environment tool notes');
+    console.log('Wrote TOOLS.md with environment tool notes');
   }
 
   // Ensure custom provider models have adequate contextWindow.

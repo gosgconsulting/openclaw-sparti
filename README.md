@@ -104,6 +104,8 @@ All skills in `skills/` are bundled into the Docker image and auto-activated for
 | **composio-connect** | Lets the bot generate and send Composio OAuth Connect Links directly in chat. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
 | **polymarket-clob** | Polymarket CLOB API geoblock guardrail. Routes order placement through `POLYMARKET_PROXY_URL` when set; blocks order attempts and informs the user when not set. Read-only market data always works. |
 | **sparti-context** | Access the user's Sparti account (brands, agents, projects, copilot tools) and launch agents or trigger Supabase edge functions directly from the bot. Requires Supabase auth. |
+| **prompt-runner** | Intercept `/shortcode` messages and execute saved Mission Control prompts — workflows, agent launches, edge functions, and composite steps. |
+| **skill-creator** | Save workflows, agent launches, and edge function calls as named `/shortcodes` directly from the bot. Also lets you create OpenClaw skills from chat. |
 
 Skills can be enabled/disabled per-account from the **Skills** tab in the dashboard (`/dashboard#tab=skills`).
 
@@ -562,6 +564,33 @@ Read the user's Sparti account data and launch agents or invoke edge functions f
 | POST | `/api/sparti/agents/:id/launch` | Launch an agent session (calls `llmgateway-chat` edge fn) |
 | POST | `/api/sparti/agents/:id/chat` | Chat with an agent (calls `llmgateway-chat` edge fn) |
 | POST | `/api/sparti/edge/:slug` | Invoke any Supabase edge function by slug |
+
+### Prompts / Shortcodes (Supabase auth required)
+
+Saved `/shortcode` workflows. The `prompt-runner` skill intercepts `/slug` messages in the bot and executes these.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/mission-control/api/prompts` | List all saved prompts |
+| GET | `/mission-control/api/prompts/:slug` | Get a specific prompt |
+| POST | `/mission-control/api/prompts` | Create a new prompt |
+| PATCH | `/mission-control/api/prompts/:slug` | Update a prompt |
+| DELETE | `/mission-control/api/prompts/:slug` | Delete a prompt |
+| POST | `/mission-control/api/prompts/:slug/run` | Execute a prompt (returns dispatch instructions) |
+
+**Prompt types:** `workflow` · `agent_launch` · `chat` · `edge_fn` · `composite`
+
+**Example — save a workflow shortcode:**
+```json
+POST /mission-control/api/prompts
+{
+  "name": "Project Doc Planner",
+  "slug": "project-doc-planner",
+  "type": "workflow",
+  "payload": { "edge_fn_slug": "workflow-ai", "workflow": "project-doc-planner" }
+}
+```
+Then type `/project-doc-planner` in the bot to run it.
 
 **Agent launch/chat body:**
 ```json
