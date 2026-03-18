@@ -1,7 +1,7 @@
 ---
 name: composio-connect
 description: Connect any integration via Composio — OAuth redirect link or direct API-key setup — directly from the bot
-version: 1.2.0
+version: 1.3.0
 metadata:
   openclaw:
     requires:
@@ -114,13 +114,17 @@ These are the auth configs configured in the Sparti Composio account (43 total):
 
 ## Flow 1 — OAuth (redirect link)
 
-Call the connect-link endpoint:
+Call the connect-link endpoint. Always pass `userId` (the user's Supabase UUID from `SPARTI_USER_ID` env or the `x-user-id` header) and `returnTo: "/connected"` so the user lands on a clean "you're connected, close this tab" page after authorizing.
 
 ```bash
 curl -s -X POST http://127.0.0.1:${PORT:-8080}/api/composio/connect-link \
   -H "Authorization: Bearer $SETUP_PASSWORD" \
   -H "Content-Type: application/json" \
-  -d '{"toolkitKey": "slack"}'
+  -d '{
+    "toolkitKey": "slack",
+    "userId": "<SPARTI_USER_ID or x-user-id>",
+    "returnTo": "/connected"
+  }'
 ```
 
 Response:
@@ -132,7 +136,11 @@ Send the `redirectUrl` to the user. Example reply:
 > Here's your Slack connect link — click it to authorize Composio access to your Slack workspace:
 > https://connect.composio.dev/link/ln_abc123
 >
-> The link is single-use and expires if you close it without completing the authorization.
+> The link is single-use and expires if you close it without completing the authorization. After authorizing, you'll see a confirmation page — you can close it and come back here.
+
+**Why pass `userId` and `returnTo`?**
+- `userId`: ensures the connection is saved under your Supabase account (not a generic bot session). Use `SPARTI_USER_ID` env var if set, or the `x-user-id` value from the request context.
+- `returnTo: "/connected"`: after OAuth, Composio redirects to a clean standalone page ("✅ Connected — close this tab") instead of the full dashboard. The connection is saved automatically in the background.
 
 ---
 
@@ -206,4 +214,5 @@ The connection is **immediately active** — no redirect needed. Reply to the us
 - **Never** expose `SETUP_PASSWORD` or any user API key to the user in chat.
 - OAuth links are **single-use and short-lived** — generate a fresh one each time.
 - API-key connections are **immediately active** — no redirect needed.
-- After OAuth completion, Composio redirects the user to the dashboard callback. The connection becomes active automatically.
+- After OAuth completion, Composio redirects the user to `/connected` (a clean "you're connected" page they can close). The connection is saved to `composio_connections` automatically — no further action needed.
+- If `userId` is omitted or `bot-shared`, the connection is saved under a shared Composio session and **not** linked to the user's Supabase account. Always pass `userId` for per-user connections.

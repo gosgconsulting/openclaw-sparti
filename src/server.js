@@ -1047,11 +1047,22 @@ function resolveReturnTo(req) {
 /**
  * Determine the return URL after a successful or failed Composio OAuth callback.
  * Validates the returnTo URL is same-origin and safe (no open-redirect).
+ * @param {string|null} returnTo - Where to redirect (relative path)
+ * @param {'success'|'failed'} outcome
+ * @param {string} [toolkitKey] - Toolkit slug, used for /connected page display name
  */
-function resolveCallbackReturnUrl(returnTo, outcome) {
+function resolveCallbackReturnUrl(returnTo, outcome, toolkitKey) {
   const suffix = outcome === 'success' ? '&connect=success' : '&connect=failed';
   // Only allow same-origin relative paths starting with /
-  if (returnTo && /^\/[a-zA-Z0-9/_#-]/.test(returnTo)) {
+  if (returnTo && /^\/[a-zA-Z0-9/_#?=-]/.test(returnTo)) {
+    // /connected is a special standalone page — just pass toolkit as query param on success
+    if (returnTo === '/connected' || returnTo.startsWith('/connected?')) {
+      if (outcome === 'success') {
+        const tk = toolkitKey ? `?toolkit=${encodeURIComponent(toolkitKey)}` : '';
+        return `/connected${tk}`;
+      }
+      return '/dashboard#tab=connectors&connect=failed';
+    }
     // Append connect outcome to the hash if the path contains #, else append as hash
     if (returnTo.includes('#')) {
       return returnTo + suffix;
@@ -1184,7 +1195,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
   const returnTo = cbCookie?.returnTo || cbToken?.returnTo || null;
 
   if (status !== 'success' || !connected_account_id || !toolkitKey) {
-    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed'));
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
   }
 
   // Resolve userId: cookie → token → live session.
@@ -1203,7 +1214,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
 
   if (!userId) {
     console.error('[connectors/callback] could not identify user — no cookie and no session');
-    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed'));
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
   }
 
   try {
@@ -1229,7 +1240,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     console.error('[connectors/callback] error:', err.message);
   }
 
-  return res.redirect(resolveCallbackReturnUrl(returnTo, 'success'));
+  return res.redirect(resolveCallbackReturnUrl(returnTo, 'success', toolkitKey));
 });
 
 // ── /connected — lightweight post-OAuth landing page ─────────────────────────
