@@ -2272,11 +2272,12 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         const accountLines = accounts.length
           ? accounts.map(a => {
               const label = esc(a.email || a.label || a.id || 'Account');
+              const accountId = (a && a.id) ? esc(String(a.id)) : '';
               return \`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
                 <span style="font-size:12px;font-family:monospace;color:var(--text2);">\${label}</span>
                 <div style="display:flex;gap:6px;">
-                  <button class="btn btn-secondary btn-sm" data-int-action="reconnect" data-int-key="\${esc(key)}">Reconnect</button>
-                  <button class="btn btn-danger btn-sm" data-int-action="disconnect" data-int-key="\${esc(key)}">Disconnect</button>
+                  <button class="btn btn-secondary btn-sm" data-int-action="reconnect" data-int-key="\${esc(key)}" data-int-connected-account-id="\${accountId}">Reconnect</button>
+                  <button class="btn btn-danger btn-sm" data-int-action="disconnect" data-int-key="\${esc(key)}" data-int-connected-account-id="\${accountId}">Disconnect</button>
                 </div>
               </div>\`;
             }).join('')
@@ -2361,15 +2362,17 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       if (!btn) return;
       const action = btn.getAttribute('data-int-action');
       const key = btn.getAttribute('data-int-key');
+      const connectedAccountId = btn.getAttribute('data-int-connected-account-id') || '';
       if (!action || !key) return;
       const errEl = document.getElementById('integrations-connectors-error');
       errEl.style.display = 'none';
       try {
+        const body = { returnTo: '/mission-control#integrations' };
+        if (connectedAccountId && (action === 'disconnect' || action === 'reconnect')) body.connectedAccountId = connectedAccountId;
         const res = await fetch('/dashboard/connectors/' + encodeURIComponent(key) + '/' + encodeURIComponent(action), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          // Tell the server to redirect back here after OAuth completes.
-          body: JSON.stringify({ returnTo: '/mission-control#integrations' }),
+          body: JSON.stringify(body),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error || 'HTTP ' + res.status);

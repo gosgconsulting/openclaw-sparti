@@ -101,7 +101,7 @@ All skills in `skills/` are bundled into the Docker image and auto-activated for
 | Skill | Description |
 |-------|-------------|
 | **searxng-local** | Web search via SearXNG. Set `SEARXNG_URL` to point at your instance (see [OpenClaw + SearXNG template](https://railway.com/deploy/jOiw-W)) |
-| **composio-connect** | Lets the bot connect any integration via Composio — OAuth redirect link for apps like GitHub/Slack/Google, or direct API-key setup for services like SendGrid/Perplexity/Stripe. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
+| **composio-connect** | Lets the bot connect any integration via Composio — OAuth for GitHub/Slack/Google Super (one OAuth for Gmail, Drive, Calendar, Sheets, etc.) or per-service Google (Gmail, Google Ads, etc.), plus API-key setup for SendGrid/Perplexity/Stripe. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
 | **polymarket-clob** | Polymarket CLOB API geoblock guardrail. Routes order placement through `POLYMARKET_PROXY_URL` when set; blocks order attempts and informs the user when not set. Read-only market data always works. |
 | **sparti-context** | Access the user's Sparti account (brands, agents, projects, copilot tools) and launch agents or trigger Supabase edge functions directly from the bot. Requires Supabase auth. |
 | **prompt-runner** | Intercept `/shortcode` messages and execute saved Mission Control prompts — workflows, agent launches, edge functions, and composite steps. |
@@ -520,7 +520,7 @@ Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
 | POST | `/dashboard/connectors/:key/connect` | Generate a short-lived Composio Connect Link and persist `initiated` state |
 | GET | `/dashboard/connectors/callback` | OAuth callback — Composio redirects here after auth; marks connection `active` |
 | POST | `/dashboard/connectors/:key/reconnect` | Generate a fresh Connect Link for an existing connection |
-| POST | `/dashboard/connectors/:key/disconnect` | Disconnect from Composio and mark row `disconnected` |
+| POST | `/dashboard/connectors/:key/disconnect` | Disconnect from Composio. Optional body: `{ connectedAccountId }` to disconnect a specific account when multiple are connected. |
 
 **Connect Link flow:**
 1. Browser calls `POST /dashboard/connectors/:key/connect`
@@ -528,9 +528,9 @@ Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
 3. Server returns `{ redirectUrl }` — browser navigates to `https://connect.composio.dev/link/…`
 4. User completes OAuth on Composio's hosted page
 5. Composio redirects to `/dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=…`
-6. Server marks the `composio_connections` row `active` and redirects to `/dashboard#tab=connectors`
+6. Server inserts or updates a `composio_connections` row (by user, toolkit, connected_account_id) and redirects to `/dashboard#tab=connectors` or Mission Control.
 
-Connection state is persisted in the `composio_connections` Supabase table (see `supabase/migrations/20260318_composio_connections.sql`). The Connectors tab shows all integrators from your Composio auth configs, with a search bar to filter by name or description. Google services (Gmail, Drive, Sheets, Docs, Calendar, Meet, etc.) are grouped into a single **Google Workspace** card with expandable per-service Connect buttons (Composio v3 has no single "Google Super" OAuth — each service connects separately).
+Connection state is persisted in the `composio_connections` Supabase table (migrations `20260318_composio_connections.sql` and `20260319_composio_connections_multi_account.sql`). Multiple accounts per connector are supported. The Connectors tab shows each connector with a list of connected accounts (email or label when available from Composio), each with **Reconnect** and **Disconnect** actions. **Google Super** (when configured in Composio) appears as a single recommended card; individual Google connectors are grouped under **Google Workspace (per service)**.
 
 ### Skills (Supabase auth required)
 

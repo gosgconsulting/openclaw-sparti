@@ -199,7 +199,7 @@ export async function listConnectedAccountsV3(userId, apiKey) {
   const { signal, done } = withTimeout(15000);
   try {
     const params = new URLSearchParams({ limit: '100' });
-    if (userId) params.set('entity_id', userId);
+    if (userId) params.set('user_ids', userId);
     const res = await fetch(
       `https://backend.composio.dev/api/v3/connected_accounts?${params.toString()}`,
       { method: 'GET', headers: { 'x-api-key': key, 'accept': 'application/json' }, signal }

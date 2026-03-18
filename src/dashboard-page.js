@@ -391,11 +391,12 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         const accountLines = accounts.length
           ? accounts.map(a => {
               const label = (a && (a.email || a.label || a.id)) ? String(a.email || a.label || a.id) : 'Account';
+              const accountId = (a && a.id) ? String(a.id) : '';
               return '<div class="row" style="justify-content: space-between; gap:12px; margin-top:8px;">' +
                 '<div class="mono" style="opacity:0.95;">' + escapeHtml(label) + '</div>' +
                 '<div class="actions" style="gap:10px;">' +
-                  '<button class="btn small" type="button" data-action="reconnect" data-key="' + escapeHtml(key) + '">Reconnect</button>' +
-                  '<button class="btn small" type="button" data-action="disconnect" data-key="' + escapeHtml(key) + '" style="border-color: rgba(255,92,92,0.35);">Disconnect</button>' +
+                  '<button class="btn small" type="button" data-action="reconnect" data-key="' + escapeHtml(key) + '" data-connected-account-id="' + escapeHtml(accountId) + '">Reconnect</button>' +
+                  '<button class="btn small" type="button" data-action="disconnect" data-key="' + escapeHtml(key) + '" data-connected-account-id="' + escapeHtml(accountId) + '" style="border-color: rgba(255,92,92,0.35); color: #ef4444;">Disconnect</button>' +
                 '</div>' +
               '</div>';
             }).join('')
@@ -487,14 +488,15 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       renderConnectorsList(filterConnectorsBySearch(allConnectors, this.value), connectorsConfigured);
     });
 
-    async function runConnectorAction(action, key) {
+    async function runConnectorAction(action, key, connectedAccountId) {
       const err = document.getElementById('connectors-error');
       err.style.display = 'none';
       try {
-        const res = await fetch('/dashboard/connectors/' + encodeURIComponent(key) + '/' + encodeURIComponent(action), {
-          method: 'POST',
-          headers: { 'Accept': 'application/json' },
-        });
+        const opts = { method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' } };
+        if (connectedAccountId && (action === 'disconnect' || action === 'reconnect')) {
+          opts.body = JSON.stringify({ connectedAccountId });
+        }
+        const res = await fetch('/dashboard/connectors/' + encodeURIComponent(key) + '/' + encodeURIComponent(action), opts);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json && json.error ? json.error : ('HTTP ' + res.status));
         if (json && json.redirectUrl) {
@@ -526,8 +528,9 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       if (!btn) return;
       const action = btn.getAttribute('data-action');
       const key = btn.getAttribute('data-key');
+      const connectedAccountId = btn.getAttribute('data-connected-account-id') || '';
       if (!action || !key) return;
-      runConnectorAction(action, key);
+      runConnectorAction(action, key, connectedAccountId);
     });
     const m = location.hash.match(/tab=([a-z]+)/);
     if (m && (m[1] === 'connectors' || m[1] === 'channels')) setTab(m[1]);

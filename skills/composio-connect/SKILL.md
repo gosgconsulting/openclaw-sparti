@@ -1,7 +1,7 @@
 ---
 name: composio-connect
 description: Connect any integration via Composio — OAuth redirect link or direct API-key setup — directly from the bot
-version: 1.3.0
+version: 1.4.0
 metadata:
   openclaw:
     requires:
@@ -20,6 +20,7 @@ You can connect any integration through Composio directly from chat. Two flows a
 ## When to use this skill
 
 Use this skill when the user asks to:
+- "Connect Google" or "Connect Google Super" — use toolkitKey `googlesuper` for one OAuth (Gmail, Drive, Calendar, Sheets, etc.). For a single service use `gmail`, `googleads`, etc.
 - "Connect Slack with Composio"
 - "Connect my GitHub account"
 - "Get a magic link to connect [any app]"
@@ -60,12 +61,13 @@ When the user sends a **single message** that includes both the app name and the
 
 ## Auth type reference
 
-These are the auth configs configured in the Sparti Composio account (43 total):
+**Google:** Prefer **Google Super** (`googlesuper`) for one OAuth covering Gmail, Drive, Calendar, Sheets, Docs, Meet, Analytics, Ads, Photos. Use individual toolkit keys (e.g. `gmail`, `googleads`) when the user wants only one service or when Google Super is not configured in the Composio account.
 
 | App | toolkitKey | Auth type |
 |-----|-----------|-----------|
 | GitHub | `github` | OAuth |
 | Slack | `slack` | OAuth |
+| Google Super | `googlesuper` or `google_super` | OAuth |
 | Gmail | `gmail` | OAuth |
 | Google Drive | `googledrive` | OAuth |
 | Google Sheets | `googlesheets` | OAuth |

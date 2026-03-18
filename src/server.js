@@ -831,13 +831,15 @@ app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
 const TOOLKIT_META = {
   slack: { name: 'Slack', description: 'Send messages, manage channels, and automate workflows.', recommended: true },
   github: { name: 'GitHub', description: 'Source control, issues, pull requests, and workflows.', recommended: true },
+  googlesuper: { name: 'Google Super', description: 'One OAuth for Gmail, Drive, Calendar, Sheets, Docs, Meet, Analytics, Ads, Photos, and more. Use via Composio MCP.', recommended: true },
+  google_super: { name: 'Google Super', description: 'One OAuth for Gmail, Drive, Calendar, Sheets, Docs, Meet, Analytics, Ads, Photos, and more. Use via Composio MCP.', recommended: true },
   gmail: { name: 'Gmail', description: 'Read, send, and manage Gmail messages and contacts.', recommended: true },
   googledrive: { name: 'Google Drive', description: 'Access and manage files in Google Drive.', recommended: false },
   googlesheets: { name: 'Google Sheets', description: 'Read and write Google Sheets spreadsheets.', recommended: false },
   googledocs: { name: 'Google Docs', description: 'Create and edit Google Docs documents.', recommended: false },
   googlecalendar: { name: 'Google Calendar', description: 'Manage events and schedules in Google Calendar.', recommended: false },
   googleslides: { name: 'Google Slides', description: 'Create and edit Google Slides presentations.', recommended: false },
-  googleads: { name: 'Google Ads', description: 'Manage Google Ads campaigns and reporting.', recommended: false },
+  googleads: { name: 'Google Ads', description: 'Manage Google Ads campaigns and reporting. Standalone when not using Google Super.', recommended: false },
   google_analytics: { name: 'Google Analytics', description: 'Access Google Analytics data and reports.', recommended: false },
   google_search_console: { name: 'Google Search Console', description: 'Monitor search performance and indexing.', recommended: false },
   googlemeet: { name: 'Google Meet', description: 'Create and manage Google Meet video meetings.', recommended: false },
@@ -892,8 +894,11 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
     }
   }
 
-  // Load this user's connection state from Supabase.
+  // Load this user's connection state from Supabase (multiple rows per toolkit allowed).
+  /** @type {Record<string, Array<{ connected_account_id: string, status: string }>>} */
   let connectionsByKey = {};
+  /** @type {Record<string, { label: string, email?: string }>} */
+  let accountDetailsByCaId = {};
   try {
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
     const { data: rows } = await supabase
@@ -901,16 +906,43 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
       .select('toolkit_key,status,connected_account_id')
       .eq('user_id', req.user.id);
     for (const row of rows || []) {
-      connectionsByKey[row.toolkit_key] = row;
+      if (!row.toolkit_key) continue;
+      if (!connectionsByKey[row.toolkit_key]) connectionsByKey[row.toolkit_key] = [];
+      if (row.connected_account_id && row.status === 'active') {
+        connectionsByKey[row.toolkit_key].push({ connected_account_id: row.connected_account_id, status: row.status });
+      }
+    }
+    // Enrich with email/label from Composio when available.
+    if (apiKey) {
+      try {
+        const composioAccounts = await listConnectedAccountsV3(req.user.id, apiKey);
+        for (const a of composioAccounts) {
+          accountDetailsByCaId[a.id] = { label: a.label, email: a.email || undefined };
+        }
+      } catch {
+        // Non-fatal: show accounts with id only.
+      }
     }
   } catch {
     // Non-fatal: proceed without connection state.
   }
 
   function connectionBadge(key) {
-    const row = connectionsByKey[key];
-    if (!row) return { connected: false };
-    return { connected: row.status === 'active', status: row.status };
+    const list = connectionsByKey[key];
+    const hasActive = list && list.some(r => r.status === 'active');
+    return { connected: !!hasActive, status: hasActive ? 'active' : 'disconnected' };
+  }
+
+  function accountsForToolkit(key) {
+    const list = connectionsByKey[key] || [];
+    return list.map(({ connected_account_id }) => {
+      const details = accountDetailsByCaId[connected_account_id] || {};
+      return {
+        id: connected_account_id,
+        email: details.email || null,
+        label: details.label || connected_account_id,
+      };
+    });
   }
 
   // Build connector list from auth configs — one entry per toolkit.
@@ -930,7 +962,7 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
       authScheme: cfg.authScheme,
       logo: cfg.logo,
       badges: { recommended: meta.recommended || false, ...connectionBadge(cfg.toolkit) },
-      accounts: [],
+      accounts: accountsForToolkit(cfg.toolkit),
     });
   }
 
@@ -940,31 +972,47 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
     return a.name.localeCompare(b.name);
   });
 
-  // Group Google toolkits into one "Google Workspace" card (Composio v3 has no single google_super OAuth;
-  // each service is separate — we group in the UI so one card shows all with per-service Connect).
+  // Google Super (googlesuper) = one OAuth for all main Google services; show as its own card when in auth configs.
+  const GOOGLE_SUPER_KEYS = new Set(['googlesuper', 'google_super']);
+  const googleSuperCard = composioConnectors.find(c => GOOGLE_SUPER_KEYS.has(c.key)) || null;
+
+  // Group individual Google product toolkits into one "Google Workspace" card (per-service Connect).
+  // Excludes Google Super so it appears as a standalone card; includes Google Ads and others as standalone options in the group.
   const GOOGLE_TOOLKIT_KEYS = new Set([
     'gmail', 'googledrive', 'googlesheets', 'googledocs', 'googlecalendar', 'googleslides',
     'googleads', 'google_analytics', 'google_search_console', 'googlemeet',
   ]);
   const googleConnectors = composioConnectors.filter(c => GOOGLE_TOOLKIT_KEYS.has(c.key));
-  const nonGoogleConnectors = composioConnectors.filter(c => !GOOGLE_TOOLKIT_KEYS.has(c.key));
+  const nonGoogleConnectors = composioConnectors.filter(c => !GOOGLE_TOOLKIT_KEYS.has(c.key) && !GOOGLE_SUPER_KEYS.has(c.key));
 
   const googleWorkspaceCard = googleConnectors.length > 0
-    ? {
-        key: 'google_workspace',
-        name: 'Google Workspace',
-        description: 'Gmail, Drive, Sheets, Docs, Calendar, Meet, and more. Connect each service as needed.',
-        provider: 'composio',
-        badges: {
-          recommended: true,
-          connected: googleConnectors.some(c => c.badges && c.badges.connected),
-        },
-        children: googleConnectors,
-        accounts: [],
-      }
+    ? (() => {
+        const seenIds = new Set();
+        const allAccounts = [];
+        for (const ch of googleConnectors) {
+          for (const acc of ch.accounts || []) {
+            if (acc.id && !seenIds.has(acc.id)) {
+              seenIds.add(acc.id);
+              allAccounts.push(acc);
+            }
+          }
+        }
+        return {
+          key: 'google_workspace',
+          name: 'Google Workspace (per service)',
+          description: 'Gmail, Drive, Sheets, Docs, Calendar, Meet, Google Ads, and more. Connect each service individually.',
+          provider: 'composio',
+          badges: {
+            recommended: false,
+            connected: googleConnectors.some(c => c.badges && c.badges.connected),
+          },
+          children: googleConnectors,
+          accounts: allAccounts,
+        };
+      })()
     : null;
 
-  // Web Search is always present (built-in). Then Google Workspace (grouped), then the rest.
+  // Web Search first, then Google Super (if present), then Google Workspace group, then the rest.
   const connectors = [
     {
       key: 'web_search',
@@ -974,6 +1022,7 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
       badges: { active: true, connected: true, recommended: false },
       accounts: [],
     },
+    ...(googleSuperCard ? [googleSuperCard] : []),
     ...(googleWorkspaceCard ? [googleWorkspaceCard] : []),
     ...nonGoogleConnectors,
   ];
@@ -1173,24 +1222,8 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
     const origin = getRequestOrigin(req);
     const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin, composioApiKey);
 
-    // Persist the initiated connection so we can match it on callback.
-    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-    const { error: dbErr } = await supabase
-      .from('composio_connections')
-      .upsert(
-        {
-          user_id: userId,
-          toolkit_key: toolkitKey,
-          connection_request_id: connectionRequestId,
-          connected_account_id: null,
-          status: 'initiated',
-        },
-        { onConflict: 'user_id,toolkit_key' }
-      );
-    if (dbErr) {
-      console.error('[connectors/connect] db upsert error:', dbErr.message);
-      // Non-fatal: still return the link so the user can proceed.
-    }
+    // No DB write here — callback will insert/upsert by (user_id, toolkit_key, connected_account_id).
+    // Multiple accounts per toolkit are supported.
 
     // Set a short-lived cookie so the callback can identify the user,
     // know where to redirect (returnTo), and optionally restore the Supabase session
@@ -1275,6 +1308,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     const supabase = process.env.SUPABASE_SERVICE_ROLE_KEY
       ? createSupabaseAdminClient()
       : createSupabaseClient();
+    // Insert or update by (user_id, toolkit_key, connected_account_id) to support multiple accounts per toolkit.
     const { error: dbErr } = await supabase
       .from('composio_connections')
       .upsert(
@@ -1284,7 +1318,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
           connected_account_id: String(connected_account_id),
           status: 'active',
         },
-        { onConflict: 'user_id,toolkit_key' }
+        { onConflict: 'user_id,toolkit_key,connected_account_id' }
       );
     if (dbErr) {
       console.error('[connectors/callback] db upsert error:', dbErr.message);
@@ -1375,22 +1409,7 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
     const origin = getRequestOrigin(req);
     const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin, composioApiKey);
 
-    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-    const { error: dbErr } = await supabase
-      .from('composio_connections')
-      .upsert(
-        {
-          user_id: userId,
-          toolkit_key: toolkitKey,
-          connection_request_id: connectionRequestId,
-          connected_account_id: null,
-          status: 'initiated',
-        },
-        { onConflict: 'user_id,toolkit_key' }
-      );
-    if (dbErr) {
-      console.error('[connectors/reconnect] db upsert error:', dbErr.message);
-    }
+    // No DB write — callback will upsert by (user_id, toolkit_key, connected_account_id).
 
     // Same cookie as connect — callback needs it to identify the user, return them to the right page, and restore session.
     const returnTo = resolveReturnTo(req);
@@ -1417,40 +1436,49 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
 app.post('/dashboard/connectors/:key/disconnect', requireUser(), async (req, res) => {
   const toolkitKey = req.params.key;
   const userId = req.user.id;
+  const connectedAccountId = req.body?.connectedAccountId && String(req.body.connectedAccountId).trim();
 
   try {
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
 
-    // Look up the connected_account_id for this user + toolkit.
-    const { data: row, error: fetchErr } = await supabase
-      .from('composio_connections')
-      .select('connected_account_id')
-      .eq('user_id', userId)
-      .eq('toolkit_key', toolkitKey)
-      .maybeSingle();
-
-    if (fetchErr) {
-      return res.status(500).json({ error: fetchErr.message });
-    }
-
-    if (row?.connected_account_id) {
-      try {
-        const composioApiKey = await getComposioApiKey();
-        await disconnectComposioAccount(row.connected_account_id, composioApiKey);
-      } catch (composioErr) {
-        // Log but don't block — still mark as disconnected locally.
-        console.error('[connectors/disconnect] Composio error:', composioErr.message);
+    let rows;
+    if (connectedAccountId) {
+      const { data, error: fetchErr } = await supabase
+        .from('composio_connections')
+        .select('id, connected_account_id')
+        .eq('user_id', userId)
+        .eq('toolkit_key', toolkitKey)
+        .eq('connected_account_id', connectedAccountId)
+        .in('status', ['active', 'initiated']);
+      if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+      rows = data || [];
+    } else {
+      const { data, error: fetchErr } = await supabase
+        .from('composio_connections')
+        .select('id, connected_account_id')
+        .eq('user_id', userId)
+        .eq('toolkit_key', toolkitKey)
+        .eq('status', 'active');
+      if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+      rows = data || [];
+      if (rows.length > 1) {
+        return res.status(400).json({ error: 'Multiple accounts connected. Pass connectedAccountId in the request body to disconnect a specific account.' });
       }
     }
 
-    const { error: updateErr } = await supabase
-      .from('composio_connections')
-      .update({ status: 'disconnected', connected_account_id: null })
-      .eq('user_id', userId)
-      .eq('toolkit_key', toolkitKey);
-
-    if (updateErr) {
-      return res.status(500).json({ error: updateErr.message });
+    for (const row of rows) {
+      if (row?.connected_account_id) {
+        try {
+          const composioApiKey = await getComposioApiKey();
+          await disconnectComposioAccount(row.connected_account_id, composioApiKey);
+        } catch (composioErr) {
+          console.error('[connectors/disconnect] Composio error:', composioErr.message);
+        }
+      }
+      await supabase
+        .from('composio_connections')
+        .update({ status: 'disconnected', connected_account_id: null })
+        .eq('id', row.id);
     }
 
     return res.json({ ok: true });
