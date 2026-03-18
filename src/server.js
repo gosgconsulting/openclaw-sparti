@@ -13,7 +13,7 @@
 
 import express from 'express';
 import { createServer } from 'http';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, createWriteStream, readdirSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -33,7 +33,7 @@ import { getUIPageHTML } from './ui-page.js';
 import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
 import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
-import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies, getSupabaseTokensFromRequest } from './auth-supabase.js';
+import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies, getSupabaseTokensFromRequest, OC_RETURN_COOKIE } from './auth-supabase.js';
 import missionControlRouter from './routes/mission-control.js';
 import spartiContextRouter from './routes/sparti-context.js';
 import { emitAudit } from './audit.js';
@@ -994,9 +994,45 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
 
 const COMPOSIO_CB_COOKIE = 'composio_cb';
 
-function setComposioCallbackCookie(res, userId, toolkitKey, returnTo) {
-  const payload = Buffer.from(JSON.stringify({ userId, toolkitKey, returnTo: returnTo || null, ts: Date.now() })).toString('base64');
-  res.cookie(COMPOSIO_CB_COOKIE, payload, {
+/** Encrypt refresh token for session restore after OAuth (same cookie survives redirect; Supabase cookies may not). */
+function encryptRefreshForCallback(refreshToken) {
+  if (!refreshToken || typeof refreshToken !== 'string') return null;
+  const key = createHash('sha256').update((process.env.SETUP_PASSWORD || 'openclaw-cb').toString()).digest();
+  const iv = randomBytes(16);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(refreshToken, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, enc]).toString('base64url');
+}
+
+/** Decrypt refresh token from composio_cb cookie; returns null on failure. */
+function decryptRefreshFromCallback(encrypted) {
+  if (!encrypted || typeof encrypted !== 'string') return null;
+  try {
+    const buf = Buffer.from(encrypted, 'base64url');
+    if (buf.length < 32 + 16) return null; // iv(16) + authTag(16) + payload
+    const key = createHash('sha256').update((process.env.SETUP_PASSWORD || 'openclaw-cb').toString()).digest();
+    const iv = buf.subarray(0, 16);
+    const authTag = buf.subarray(16, 32);
+    const enc = buf.subarray(32);
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    return decipher.update(enc) + decipher.final('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function setComposioCallbackCookie(res, userId, toolkitKey, returnTo, refreshTokenEncrypted = null) {
+  const payload = {
+    userId,
+    toolkitKey,
+    returnTo: returnTo || null,
+    ts: Date.now(),
+    ...(refreshTokenEncrypted ? { r: refreshTokenEncrypted } : {}),
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64');
+  res.cookie(COMPOSIO_CB_COOKIE, encoded, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax', // must be lax (not strict) so the cookie is sent on the Composio redirect back
@@ -1017,6 +1053,7 @@ function readComposioCallbackCookie(req) {
       userId: String(parsed.userId),
       toolkitKey: String(parsed.toolkitKey),
       returnTo: typeof parsed.returnTo === 'string' ? parsed.returnTo : null,
+      refreshTokenEncrypted: typeof parsed.r === 'string' ? parsed.r : null,
     };
   } catch {
     return null;
@@ -1152,9 +1189,22 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
       // Non-fatal: still return the link so the user can proceed.
     }
 
-    // Set a short-lived cookie so the callback can identify the user and
-    // know where to redirect after OAuth (returnTo = originating page).
-    setComposioCallbackCookie(res, userId, toolkitKey, returnTo);
+    // Set a short-lived cookie so the callback can identify the user,
+    // know where to redirect (returnTo), and optionally restore the Supabase session
+    // so the user is not asked to log in again after returning from Composio OAuth.
+    const { refreshToken } = getSupabaseTokensFromRequest(req);
+    const refreshEnc = refreshToken ? encryptRefreshForCallback(refreshToken) : null;
+    setComposioCallbackCookie(res, userId, toolkitKey, returnTo, refreshEnc);
+    // Preserve return path (with hash) so if user lands on /auth, redirect after login goes to the right place.
+    if (returnTo) {
+      res.cookie(OC_RETURN_COOKIE, returnTo, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 20 * 60 * 1000,
+        path: '/',
+      });
+    }
 
     return res.json({ redirectUrl });
   } catch (err) {
@@ -1240,6 +1290,24 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     console.error('[connectors/callback] error:', err.message);
   }
 
+  // Restore Supabase session so the user is not asked to log in again after OAuth.
+  // The composio_cb cookie survives the redirect from Composio; Supabase cookies may not.
+  const refreshEnc = cbCookie?.refreshTokenEncrypted || null;
+  if (refreshEnc) {
+    const refreshToken = decryptRefreshFromCallback(refreshEnc);
+    if (refreshToken) {
+      try {
+        const supabase = createSupabaseClient();
+        const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+        if (!error && data?.session?.access_token) {
+          setSupabaseAuthCookies(res, data.session);
+        }
+      } catch (e) {
+        console.error('[connectors/callback] session restore failed:', e?.message || e);
+      }
+    }
+  }
+
   return res.redirect(resolveCallbackReturnUrl(returnTo, 'success', toolkitKey));
 });
 
@@ -1321,9 +1389,20 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
       console.error('[connectors/reconnect] db upsert error:', dbErr.message);
     }
 
-    // Same cookie as connect — callback needs it to identify the user and return them to the right page.
+    // Same cookie as connect — callback needs it to identify the user, return them to the right page, and restore session.
     const returnTo = resolveReturnTo(req);
-    setComposioCallbackCookie(res, userId, toolkitKey, returnTo);
+    const { refreshToken } = getSupabaseTokensFromRequest(req);
+    const refreshEnc = refreshToken ? encryptRefreshForCallback(refreshToken) : null;
+    setComposioCallbackCookie(res, userId, toolkitKey, returnTo, refreshEnc);
+    if (returnTo) {
+      res.cookie(OC_RETURN_COOKIE, returnTo, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 20 * 60 * 1000,
+        path: '/',
+      });
+    }
 
     return res.json({ redirectUrl });
   } catch (err) {

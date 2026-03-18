@@ -44,11 +44,19 @@ export function clearSupabaseAuthCookies(res) {
   res.clearCookie(REFRESH_COOKIE, opts);
 }
 
+/** Cookie name for preserving post-OAuth return path (with hash) when redirecting to /auth. */
+export const OC_RETURN_COOKIE = 'oc_return';
+
 export function requireUser() {
   return async (req, res, next) => {
     try {
       const { accessToken, refreshToken } = getSupabaseTokensFromRequest(req);
-      const redirectTo = encodeURIComponent(req.originalUrl || '/dashboard');
+      // Prefer oc_return cookie so post-OAuth redirect to /auth keeps the hash (e.g. /mission-control#integrations)
+      const ocReturn = req.cookies?.[OC_RETURN_COOKIE];
+      const baseRedirect = typeof ocReturn === 'string' && /^\/[a-zA-Z0-9/_#?=&-]/.test(ocReturn)
+        ? ocReturn
+        : (req.originalUrl || '/dashboard');
+      const redirectTo = encodeURIComponent(baseRedirect);
 
       if (!accessToken && !refreshToken) {
         return res.redirect(`/auth?redirect=${redirectTo}`);
