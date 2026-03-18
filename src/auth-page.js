@@ -168,10 +168,24 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
     </div>
     <div class="note">Uses Supabase Auth.</div>
   </main>
+  <script>
+    (function() {
+      var hash = location.hash;
+      if (!hash) return;
+      document.querySelectorAll('input[name="redirect"]').forEach(function(el) {
+        if (el.value && el.value.indexOf('#') === -1 && el.value.charAt(0) === '/') el.value += hash;
+      });
+    })();
+  </script>
   <script type="module">
     const SUPABASE_URL = ${JSON.stringify(supabaseUrl)};
     const SUPABASE_ANON_KEY = ${JSON.stringify(supabaseAnonKey)};
     const REDIRECT_TO = ${JSON.stringify(redirectValue)};
+
+    function getRedirectWithHash() {
+      var el = document.querySelector('input[name="redirect"]');
+      return (el && el.value) ? el.value : REDIRECT_TO;
+    }
 
     const googleBtn = document.getElementById('googleBtn');
     const canOAuth = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -199,6 +213,7 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
       const session = data && data.session ? data.session : null;
       if (!session || !session.access_token || !session.refresh_token) return;
 
+      const redirectTo = getRedirectWithHash();
       const res = await fetch('/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -206,13 +221,13 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
           access_token: session.access_token,
           refresh_token: session.refresh_token,
           expires_at: session.expires_at || null,
-          redirect: REDIRECT_TO
+          redirect: redirectTo
         })
       });
       if (res.redirected) {
         window.location.href = res.url;
       } else if (res.ok) {
-        window.location.href = REDIRECT_TO || '/dashboard';
+        window.location.href = redirectTo || '/dashboard';
       }
     }
 
@@ -220,9 +235,10 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
       googleBtn.addEventListener('click', async () => {
         if (!canOAuth) return;
         const client = await getClient();
+        const redirectTo = getRedirectWithHash();
         await client.auth.signInWithOAuth({
           provider: 'google',
-          options: { redirectTo: window.location.origin + '/auth?redirect=' + encodeURIComponent(REDIRECT_TO || '/dashboard') }
+          options: { redirectTo: window.location.origin + '/auth?redirect=' + encodeURIComponent(redirectTo || '/dashboard') }
         });
       });
     }

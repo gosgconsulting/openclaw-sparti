@@ -78,7 +78,7 @@ Includes a terminal mode for advanced users who prefer the full CLI experience.
 - Non-root container (`openclaw:openclaw`, UID 1001)
 - tini as PID 1 for proper signal handling
 - Gateway bound to loopback only — wrapper handles all external traffic
-- Cookie-based auth with httpOnly, sameSite=strict, secure in production
+- Cookie-based auth with httpOnly, sameSite=lax (so session survives OAuth return from Composio etc.), secure in production
 - Proxy strips forwarded headers on WebSocket upgrades
 
 ### Operations

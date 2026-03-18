@@ -2153,7 +2153,15 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       try {
         const res = await fetch('/lite/api/config', { headers: { Accept: 'application/json' } });
         const cfgJson = res.ok ? await res.json() : {};
-        const channelsCfg = (cfgJson.config && cfgJson.config.channels) ? cfgJson.config.channels : {};
+        // GET /lite/api/config returns the raw openclaw.json shape.
+        // In that shape, channels lives at the top-level (not under config.channels).
+        // Keep a legacy fallback for older/alternate shapes.
+        const channelsCfg =
+          (cfgJson && cfgJson.channels && typeof cfgJson.channels === 'object')
+            ? cfgJson.channels
+            : (cfgJson && cfgJson.config && cfgJson.config.channels && typeof cfgJson.config.channels === 'object')
+              ? cfgJson.config.channels
+              : {};
 
         const chRes = await fetch('/mission-control/api/channels', { headers: { Accept: 'application/json' } });
         const chJson = chRes.ok ? await chRes.json() : {};

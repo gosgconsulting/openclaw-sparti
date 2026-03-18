@@ -95,6 +95,8 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Done
 
+- **Composio OAuth redirect disconnect fix (2026-03-19):** Supabase auth cookies now use `sameSite: 'lax'` so the session survives the top-level redirect back from Composio (with `strict`, cookies were dropped on that chain and users landed on `/auth`). Auth page preserves `location.hash` in the redirect input so that if the user does land on `/auth` (e.g. session expired), after login they are sent to the intended path with the fragment (e.g. `/dashboard#tab=connectors&connect=failed`). Verification: complete Composio OAuth from dashboard/Mission Control → user should remain logged in and land on the right tab; if redirected to /auth with a hash, sign in → redirect should include the hash.
+
 - **Connectors page: all integrators, search bar, Google grouped (2026-03-19):** GET /dashboard/connectors now groups Google toolkits (gmail, googledrive, googlesheets, etc.) into one "Google Workspace" card with `children`; connect/reconnect/disconnect still use per-service keys. Dashboard and Mission Control Connectors tabs: added search input, client-side filter by name/description/key (and child names for grouped card), and render grouped card with expandable "Services" details. README Connectors section updated.
 - **Bot connect API directly (2026-03-19):** composio-connect skill v1.2.0 — users can send one message with app name and API key (e.g. "connect productive.io with api: xyz"). Skill now includes a "Direct API key in message" section: patterns to recognize, extraction rules, toolkitKey derivation for unknown apps (normalize to slug), and security rule to never echo the key. Step-by-step decision logic updated to prioritize "key in message" → Flow 2 (connect-api-key) immediately. No server changes; existing POST /api/composio/connect-api-key already supports any toolkitKey. README Bot Connect Link section updated with one-line note on direct API key in chat.
 
@@ -115,6 +117,8 @@ Active tasks, next steps, blockers, and verification notes.
 - **Mission Control Integrations panel + dashboard refactor (2026-03-19):**
   - `src/mission-control-page.js` — Added "Integrations" nav section with Channels + Connectors sub-tabs. Channels tab loads channel groups from `/api/schemas` + current config from `/lite/api/config` and renders save forms posting to `/dashboard/channels/:name`. Connectors tab mirrors the `/dashboard` connectors panel (loads from `/dashboard/connectors`, supports connect/reconnect/disconnect). Added "Open console" button to Dashboard panel header linking to `/openclaw`. Removed "Dashboard" link from sidebar footer. Added CSS for integration card styles and active tab indicator.
   - `src/dashboard-page.js` — Removed Skills tab button, Skills panel HTML, `loadSkills()`, `toggleSkill()`, skills event listener. Only Channels and Connectors tabs remain.
+
+- **Mission Control Integrations > Channels enabled-state fix (2026-03-19):** `loadIntChannels()` now reads channel config from `/lite/api/config` using the raw `openclaw.json.channels` shape (with legacy fallback to `config.channels`), so connected channels like Telegram show the correct Enabled badge.
 
 - **Prompts / shortcode system (2026-03-19):**
   - `supabase/migrations/20260319_mc_prompts_and_bridges.sql` — `mc_prompts` table (RLS, unique slug per user, usage tracking) + bridge columns on `mc_agents`/`mc_boards`. Migration applied to Supabase.

@@ -7,7 +7,8 @@ function getCookieOptions() {
   return {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    // lax so session survives top-level redirect back from OAuth (e.g. Composio); strict would drop cookies on that chain
+    sameSite: 'lax',
     path: '/',
   };
 }

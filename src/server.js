@@ -2115,15 +2115,17 @@ app.get('/lite/api/logs', wrapperAuth, (req, res) => {
 app.post('/lite/api/gateway/start', wrapperAuth, async (req, res) => {
   try {
     await startGateway();
-    // Emit to Mission Control audit trail — best-effort, non-blocking
-    const adminSb = createSupabaseAdminClient();
-    if (adminSb) {
-      const userId = req.user?.id || req.headers['x-user-id'] || null;
-      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.started', actor: req.user?.email || 'operator', payload: {} });
-    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+  // Emit to Mission Control audit trail — best-effort, non-blocking, after response sent.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const adminSb = createSupabaseAdminClient();
+      const userId = req.user?.id || req.headers['x-user-id'] || null;
+      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.started', actor: req.user?.email || 'operator', payload: {} });
+    } catch { /* non-fatal */ }
   }
 });
 
@@ -2131,14 +2133,16 @@ app.post('/lite/api/gateway/start', wrapperAuth, async (req, res) => {
 app.post('/lite/api/gateway/stop', wrapperAuth, async (req, res) => {
   try {
     await stopGateway();
-    const adminSb = createSupabaseAdminClient();
-    if (adminSb) {
-      const userId = req.user?.id || req.headers['x-user-id'] || null;
-      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.stopped', actor: req.user?.email || 'operator', payload: {} });
-    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const adminSb = createSupabaseAdminClient();
+      const userId = req.user?.id || req.headers['x-user-id'] || null;
+      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.stopped', actor: req.user?.email || 'operator', payload: {} });
+    } catch { /* non-fatal */ }
   }
 });
 
@@ -2149,14 +2153,16 @@ app.post('/lite/api/gateway/restart', wrapperAuth, async (req, res) => {
       await stopGateway();
     }
     await startGateway();
-    const adminSb = createSupabaseAdminClient();
-    if (adminSb) {
-      const userId = req.user?.id || req.headers['x-user-id'] || null;
-      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.restarted', actor: req.user?.email || 'operator', payload: {} });
-    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const adminSb = createSupabaseAdminClient();
+      const userId = req.user?.id || req.headers['x-user-id'] || null;
+      if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.restarted', actor: req.user?.email || 'operator', payload: {} });
+    } catch { /* non-fatal */ }
   }
 });
 

@@ -347,7 +347,8 @@ router.get('/api/gateway', (req, res) => {
     gatewayInfo: getGatewayInfo(),
     uptime: getGatewayUptime(),
   };
-  const logs = getRecentLogs(0).slice(-40);
+  const logsResult = getRecentLogs(0);
+  const logs = Array.isArray(logsResult) ? logsResult.slice(-40) : (logsResult?.entries || []).slice(-40);
   return res.json({ gateway, logs });
 });
 
