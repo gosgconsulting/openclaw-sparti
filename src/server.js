@@ -42,6 +42,7 @@ import {
   generateConnectLink,
   initiateComposioConnection,
   listComposioConnectedAccounts,
+  listConnectedAccountsV3,
   disconnectComposioAccount,
   connectWithApiKey,
 } from './integrations/composio.js';

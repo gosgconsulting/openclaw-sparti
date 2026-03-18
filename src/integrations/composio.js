@@ -184,6 +184,49 @@ export async function listComposioConnectedAccounts(userId, apiKey) {
 }
 
 /**
+ * List all connected accounts for a user from Composio v3 API.
+ * Returns items with id, toolkit_slug, and a display label (email when available).
+ * Used to show which emails/accounts are connected per connector and support multiple accounts.
+ *
+ * @param {string} userId - Supabase user UUID (Composio entity_id)
+ * @param {string} [apiKey] - Explicit API key; falls back to COMPOSIO_API_KEY env var
+ * @returns {Promise<Array<{ id: string, toolkit_slug: string, email: string | null, label: string }>>}
+ */
+export async function listConnectedAccountsV3(userId, apiKey) {
+  const key = toSafeString(apiKey || process.env.COMPOSIO_API_KEY).trim();
+  if (!key) throw new Error('Missing COMPOSIO_API_KEY');
+
+  const { signal, done } = withTimeout(15000);
+  try {
+    const params = new URLSearchParams({ limit: '100' });
+    if (userId) params.set('entity_id', userId);
+    const res = await fetch(
+      `https://backend.composio.dev/api/v3/connected_accounts?${params.toString()}`,
+      { method: 'GET', headers: { 'x-api-key': key, 'accept': 'application/json' }, signal }
+    );
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+    if (!res.ok) {
+      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : `Composio HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    const items = Array.isArray(json?.items) ? json.items : [];
+    return items.map((item) => {
+      const id = toSafeString(item?.id ?? '');
+      const toolkitSlug = toSafeString(item?.toolkit?.slug ?? item?.appName ?? '');
+      const state = item?.state ?? item?.appCredentials ?? {};
+      const val = state?.val ?? state ?? {};
+      const email = toSafeString(val?.email ?? val?.userEmail ?? val?.account_email ?? '').trim() || null;
+      const label = email || toSafeString(val?.account_id ?? val?.accountUrl ?? val?.subdomain ?? id).trim() || id;
+      return { id, toolkit_slug: toolkitSlug, email, label: label || id };
+    });
+  } finally {
+    done();
+  }
+}
+
+/**
  * Disconnect a Composio connected account.
  * Never call from browser.
  *
