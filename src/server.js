@@ -1232,6 +1232,53 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
   return res.redirect(resolveCallbackReturnUrl(returnTo, 'success'));
 });
 
+// ── /connected — lightweight post-OAuth landing page ─────────────────────────
+// When the bot sends a Connect Link, the returnTo is set to /connected so the
+// user sees a clean "you're connected, close this tab" page instead of being
+// dumped into the full Mission Control dashboard.
+// No auth required — this page carries no sensitive data.
+app.get('/connected', (req, res) => {
+  const toolkit = typeof req.query.toolkit === 'string' ? req.query.toolkit : '';
+  const name = toolkit ? toolkit.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Integration';
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${name} Connected</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 48px 40px; text-align: center; max-width: 420px; width: 90%; }
+    .icon { font-size: 48px; margin-bottom: 20px; }
+    h1 { font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+    p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin-bottom: 24px; }
+    .badge { display: inline-block; background: #0d3d2e; color: #00e5cc; border: 1px solid #00e5cc44; border-radius: 20px; padding: 6px 16px; font-size: 13px; font-weight: 600; margin-bottom: 24px; }
+    .btn { display: inline-block; background: #1e40af; color: #fff; border: none; border-radius: 8px; padding: 10px 24px; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .btn:hover { background: #1d4ed8; }
+    .close-note { font-size: 12px; color: #64748b; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>${name} Connected</h1>
+    <div class="badge">✓ Authorization successful</div>
+    <p>Your ${name} account has been linked. You can now use it through the bot — go back to your chat to continue.</p>
+    <a href="/mission-control#integrations" class="btn">Open Mission Control</a>
+    <div class="close-note">Or close this tab and return to your conversation.</div>
+  </div>
+  <script>
+    // Auto-close if opened as a popup (e.g. window.open from a mobile app).
+    if (window.opener) {
+      window.opener.postMessage({ type: 'composio-connected', toolkit: '${toolkit.replace(/'/g, "\\'")}' }, '*');
+      setTimeout(() => window.close(), 2000);
+    }
+  </script>
+</body>
+</html>`);
+});
+
 app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res) => {
   // Reconnect is identical to connect: generate a fresh short-lived link.
   const toolkitKey = req.params.key;
