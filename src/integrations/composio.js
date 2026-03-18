@@ -11,8 +11,8 @@ function toSafeString(v) {
   return String(v);
 }
 
-function getComposioClient() {
-  const apiKey = (process.env.COMPOSIO_API_KEY || '').trim();
+function getComposioClient(explicitApiKey) {
+  const apiKey = (explicitApiKey || process.env.COMPOSIO_API_KEY || '').trim();
   if (!apiKey) throw new Error('Missing COMPOSIO_API_KEY');
   return new Composio({ apiKey });
 }
@@ -69,7 +69,7 @@ export async function listComposioApps({ apiKey, limit = 50 } = {}) {
 /**
  * Initiate a Composio OAuth connection for a user.
  * Returns a redirectUrl (Connect Link) the browser should navigate to.
- * Never call from browser — uses COMPOSIO_API_KEY.
+ * Never call from browser — uses the shared server API key.
  *
  * The Connect Link is short-lived: it expires if the user abandons the OAuth
  * flow without completing it (Composio leaves the connection in INITIATED state
@@ -78,10 +78,11 @@ export async function listComposioApps({ apiKey, limit = 50 } = {}) {
  * @param {string} userId - Supabase user UUID (used as Composio user_id)
  * @param {string} toolkitKey - Composio toolkit slug (e.g. 'google_super', 'github')
  * @param {string} callbackUrl - URL Composio redirects to after auth
+ * @param {string} [apiKey] - Explicit API key; falls back to COMPOSIO_API_KEY env var
  * @returns {Promise<{ redirectUrl: string, connectionRequestId: string }>}
  */
-export async function initiateComposioConnection(userId, toolkitKey, callbackUrl) {
-  const composio = getComposioClient();
+export async function initiateComposioConnection(userId, toolkitKey, callbackUrl, apiKey) {
+  const composio = getComposioClient(apiKey);
   const session = await composio.create(userId);
   const connectionRequest = await session.authorize(toolkitKey, { callbackUrl });
   return {
@@ -98,14 +99,19 @@ export async function initiateComposioConnection(userId, toolkitKey, callbackUrl
  * The link is single-use and short-lived (expires on abandonment).
  * Call this on every "Connect" or "Reconnect" click — never cache the URL.
  *
+ * One shared API key is used for all users on this server (passed from server.js
+ * via getComposioApiKey(), which checks COMPOSIO_API_KEY env var then Supabase
+ * app_settings). Individual user sessions are scoped by userId inside Composio.
+ *
  * @param {string} userId - Supabase user UUID
  * @param {string} toolkitKey - Composio toolkit slug
  * @param {string} origin - Request origin (e.g. 'https://your-app.railway.app')
+ * @param {string} [apiKey] - Explicit API key; falls back to COMPOSIO_API_KEY env var
  * @returns {Promise<{ redirectUrl: string, connectionRequestId: string }>}
  */
-export async function generateConnectLink(userId, toolkitKey, origin) {
+export async function generateConnectLink(userId, toolkitKey, origin, apiKey) {
   const callbackUrl = `${origin}/dashboard/connectors/callback?toolkit=${encodeURIComponent(toolkitKey)}`;
-  return initiateComposioConnection(userId, toolkitKey, callbackUrl);
+  return initiateComposioConnection(userId, toolkitKey, callbackUrl, apiKey);
 }
 
 /**
@@ -114,10 +120,11 @@ export async function generateConnectLink(userId, toolkitKey, origin) {
  * Never call from browser.
  *
  * @param {string} userId - Supabase user UUID
+ * @param {string} [apiKey] - Explicit API key; falls back to COMPOSIO_API_KEY env var
  * @returns {Promise<Array<{ toolkit_key: string, connected_account_id: string, status: string }>>}
  */
-export async function listComposioConnectedAccounts(userId) {
-  const composio = getComposioClient();
+export async function listComposioConnectedAccounts(userId, apiKey) {
+  const composio = getComposioClient(apiKey);
   const session = await composio.create(userId);
   const toolkits = await session.toolkits();
   const items = Array.isArray(toolkits?.items) ? toolkits.items : [];
@@ -137,11 +144,12 @@ export async function listComposioConnectedAccounts(userId) {
  * Never call from browser.
  *
  * @param {string} connectedAccountId - The Composio connected_account_id to disconnect
+ * @param {string} [apiKey] - Explicit API key; falls back to COMPOSIO_API_KEY env var
  * @returns {Promise<void>}
  */
-export async function disconnectComposioAccount(connectedAccountId) {
-  const apiKey = (process.env.COMPOSIO_API_KEY || '').trim();
-  if (!apiKey) throw new Error('Missing COMPOSIO_API_KEY');
+export async function disconnectComposioAccount(connectedAccountId, apiKey) {
+  const resolvedKey = (apiKey || process.env.COMPOSIO_API_KEY || '').trim();
+  if (!resolvedKey) throw new Error('Missing COMPOSIO_API_KEY');
 
   const { signal, done } = withTimeout(12000);
   try {
@@ -149,7 +157,7 @@ export async function disconnectComposioAccount(connectedAccountId) {
       `https://backend.composio.dev/api/v1/connectedAccounts/${encodeURIComponent(connectedAccountId)}`,
       {
         method: 'DELETE',
-        headers: { 'x-api-key': apiKey, 'accept': 'application/json' },
+        headers: { 'x-api-key': resolvedKey, 'accept': 'application/json' },
         signal,
       }
     );

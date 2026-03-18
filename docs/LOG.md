@@ -19,6 +19,15 @@ Chronological log of notable changes: what changed, why, risk, and rollback.
 
 ## Entries
 
+### 2026-03-18 — Mission Control plan documented
+
+- **Change:** Added Mission Control plan to `docs/PLAN.md` (findings, duplicate risks, 6-phase execution plan, reuse targets, definition of done). Updated `TODO.md` with phase-by-phase next steps. No code changes.
+- **Reason:** User requested a Mission Control interface (work orchestration, approval governance, structured audit trail, agent lifecycle) inspired by abhi1693/openclaw-mission-control. Plan establishes what already exists (gateway control, connectors, auth, schemas — all reusable), what needs to be built (boards/tasks/approvals/audit_events data model, `/mission-control` route module, page generator, `audit.js` helper), and the prerequisite refactor (server.js split, Phase 0).
+- **Risk:** Low. Documentation only; no behavior changed.
+- **Rollback:** Remove Mission Control section from `docs/PLAN.md` and revert `TODO.md`.
+
+---
+
 ### 2026-03-18 — Add "Open console" button to dashboard
 
 - **Change:** Added "Open console" link button to `src/dashboard-page.js` actions bar (between "Publish public URL" and "Admin"). Links to `/openclaw` which already exists as a password-protected proxy route that injects the gateway token into the URL and proxies to the OpenClaw gateway SPA.

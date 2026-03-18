@@ -16,7 +16,6 @@ import { createServer } from 'http';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, createWriteStream, readdirSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { randomBytes } from 'crypto';
 import JSZip from 'jszip';
 import archiver from 'archiver';
 import { siAnthropic, siGooglegemini, siOpenrouter, siVercel, siCloudflare, siOllama } from 'simple-icons';
@@ -32,7 +31,6 @@ import { getSetupPageHTML } from './onboard-page.js';
 import { getUIPageHTML } from './ui-page.js';
 import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
-import { getInstanceConsolePageHTML } from './console-page.js';
 import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
 import {
@@ -104,6 +102,33 @@ async function getSharedLlmGatewayConfigFromSupabase() {
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Resolve the shared Composio API key.
+ * Priority: COMPOSIO_API_KEY env var → app_settings(key='composio').api_key in Supabase.
+ * One key is shared across all users on this server; individual user OAuth sessions
+ * are scoped by user_id passed to composio.create(userId).
+ */
+async function getComposioApiKey() {
+  const fromEnv = getOptionalEnv('COMPOSIO_API_KEY');
+  if (fromEnv) return fromEnv;
+
+  try {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return '';
+    const admin = createSupabaseAdminClient();
+    // Expected row: app_settings(key='composio', value={"api_key":"..."})
+    const { data, error } = await admin
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'composio')
+      .maybeSingle();
+    if (error || !data?.value) return '';
+    const key = String(data.value?.api_key || data.value?.apiKey || '').trim();
+    return key;
+  } catch {
+    return '';
   }
 }
 
@@ -621,7 +646,7 @@ app.get('/dashboard', requireUser(), async (req, res) => {
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
     const { data, error } = await supabase
       .from('instances')
-      .select('id,name,status,public_url,created_at')
+      .select('id,name,status,created_at')
       .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
 
@@ -638,7 +663,7 @@ app.get('/dashboard', requireUser(), async (req, res) => {
       const created = await supabase
         .from('instances')
         .insert({ user_id: req.user.id, name })
-        .select('id,name,status,public_url,created_at')
+        .select('id,name,status,created_at')
         .single();
       if (created.error) {
         return res.status(500).send(getDashboardPageHTML({ userEmail: req.user?.email, instance: null, channelGroups: CHANNEL_GROUPS, channelsConfig: {}, error: created.error.message }));
@@ -732,7 +757,7 @@ app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
       const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
       const { data } = await supabase
         .from('instances')
-        .select('id,name,status,public_url,created_at')
+        .select('id,name,status,created_at')
         .eq('user_id', req.user.id)
         .order('created_at', { ascending: false });
       const instance = (data && data[0]) ? data[0] : null;
@@ -761,7 +786,8 @@ app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
 
 app.get('/dashboard/connectors', requireUser(), async (req, res) => {
   // Server-side only — no secrets in browser.
-  const apiKey = process.env.COMPOSIO_API_KEY || '';
+  // Key is shared across all users: env var COMPOSIO_API_KEY or app_settings(key='composio').
+  const apiKey = await getComposioApiKey();
   let apps = [];
   let configured = false;
 
@@ -852,13 +878,14 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
   const toolkitKey = req.params.key;
   const userId = req.user.id;
 
-  if (!process.env.COMPOSIO_API_KEY) {
-    return res.status(503).json({ error: 'Composio is not configured on this server.' });
+  const composioApiKey = await getComposioApiKey();
+  if (!composioApiKey) {
+    return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY or add app_settings(key=\'composio\').' });
   }
 
   try {
     const origin = getRequestOrigin(req);
-    const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin);
+    const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin, composioApiKey);
 
     // Persist the initiated connection so we can match it on callback.
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
@@ -927,13 +954,14 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
   const toolkitKey = req.params.key;
   const userId = req.user.id;
 
-  if (!process.env.COMPOSIO_API_KEY) {
-    return res.status(503).json({ error: 'Composio is not configured on this server.' });
+  const composioApiKey = await getComposioApiKey();
+  if (!composioApiKey) {
+    return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY or add app_settings(key=\'composio\').' });
   }
 
   try {
     const origin = getRequestOrigin(req);
-    const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin);
+    const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin, composioApiKey);
 
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
     const { error: dbErr } = await supabase
@@ -980,7 +1008,8 @@ app.post('/dashboard/connectors/:key/disconnect', requireUser(), async (req, res
 
     if (row?.connected_account_id) {
       try {
-        await disconnectComposioAccount(row.connected_account_id);
+        const composioApiKey = await getComposioApiKey();
+        await disconnectComposioAccount(row.connected_account_id, composioApiKey);
       } catch (composioErr) {
         // Log but don't block — still mark as disconnected locally.
         console.error('[connectors/disconnect] Composio error:', composioErr.message);
@@ -1009,7 +1038,7 @@ app.get('/api/instances', requireUser(), async (req, res) => {
     const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
     const { data, error } = await supabase
       .from('instances')
-      .select('id,name,status,public_url,created_at,updated_at')
+      .select('id,name,status,created_at,updated_at')
       .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
@@ -1024,99 +1053,6 @@ app.post('/api/instances', requireUser(), async (req, res) => {
   return res.status(405).json({ error: 'Instance creation is disabled (one instance per user).' });
 });
 
-app.post('/api/instances/:id/publish', requireUser(), async (req, res) => {
-  const instanceId = req.params.id;
-  const acceptsHtml = (req.headers.accept || '').includes('text/html');
-
-  try {
-    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-    const origin = getRequestOrigin(req);
-
-    // Generate token (retry a few times for rare unique collisions)
-    let token = '';
-    let lastError = null;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      token = randomBytes(24).toString('hex');
-      const publicUrl = `${origin}/i/${encodeURIComponent(instanceId)}?token=${encodeURIComponent(token)}`;
-
-      const { data, error } = await supabase
-        .from('instances')
-        .update({ status: 'published', public_url: publicUrl, access_token: token })
-        .eq('id', instanceId)
-        .eq('user_id', req.user.id)
-        .select('id,name,status,public_url,created_at')
-        .single();
-
-      if (!error && data) {
-        if (acceptsHtml) return res.redirect('/dashboard');
-        return res.json({ instance: data });
-      }
-
-      lastError = error || new Error('Failed to publish');
-    }
-
-    if (acceptsHtml) {
-      return res.status(500).send(
-        getDashboardPageHTML({
-          userEmail: req.user?.email,
-          instances: [],
-          error: lastError?.message || 'Failed to publish instance',
-        })
-      );
-    }
-    return res.status(500).json({ error: lastError?.message || 'Failed to publish instance' });
-  } catch (err) {
-    if (acceptsHtml) {
-      return res.status(500).send(
-        getDashboardPageHTML({
-          userEmail: req.user?.email,
-          instances: [],
-          error: err.message || 'Failed to publish instance',
-        })
-      );
-    }
-    return res.status(500).json({ error: err.message || 'Failed to publish instance' });
-  }
-});
-
-app.get('/i/:id', async (req, res) => {
-  const instanceId = req.params.id;
-  const token = (req.query.token || '').toString();
-  if (!token) return res.status(401).send('Missing token');
-
-  try {
-    const supabase = createSupabaseClient();
-    const { data, error } = await supabase.rpc('get_instance_public', { p_id: instanceId, p_token: token });
-    const instance = Array.isArray(data) ? data[0] : null;
-    if (error || !instance) return res.status(401).send('Invalid token');
-    return res.redirect(`/console/${encodeURIComponent(instanceId)}?token=${encodeURIComponent(token)}`);
-  } catch {
-    return res.status(500).send('Failed to load instance');
-  }
-});
-
-app.get('/console/:id', async (req, res) => {
-  const instanceId = req.params.id;
-  const token = (req.query.token || '').toString();
-  if (!token) return res.status(401).send(getInstanceConsolePageHTML({ error: 'Missing token' }));
-
-  try {
-    const supabase = createSupabaseClient();
-    const { data, error } = await supabase.rpc('get_instance_public', { p_id: instanceId, p_token: token });
-    const instance = Array.isArray(data) ? data[0] : null;
-    if (error || !instance) {
-      return res.status(401).send(getInstanceConsolePageHTML({ error: 'Invalid token' }));
-    }
-
-    const origin = getRequestOrigin(req);
-    const consoleUrl = `${origin}/console/${encodeURIComponent(instanceId)}?token=${encodeURIComponent(token)}`;
-    // Admin console is the existing wrapper control panel (setup-password gated).
-    const adminUrl = `${origin}/lite`;
-    return res.send(getInstanceConsolePageHTML({ instance, consoleUrl, adminUrl }));
-  } catch (err) {
-    return res.status(500).send(getInstanceConsolePageHTML({ error: err.message || 'Failed to load console' }));
-  }
-});
 
 // Legacy alias: /login previously handled setup-password auth.
 // We now use Supabase auth at /auth.

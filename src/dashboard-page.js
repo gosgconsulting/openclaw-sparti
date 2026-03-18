@@ -89,15 +89,6 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     </div>
   `;
 
-  const publishBtn = instance?.id
-    ? `<form method="POST" action="/api/instances/${encodeURIComponent(instance.id)}/publish" onsubmit="return confirm('Publish and generate a public URL?');" style="margin:0;">
-        <button class="btn small" type="submit">Publish public URL</button>
-      </form>`
-    : '';
-  const publicUrl = instance?.public_url
-    ? `<a class="btn small" href="${escapeHtml(instance.public_url)}" target="_blank" rel="noreferrer">Open public URL</a>`
-    : '';
-
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -309,8 +300,6 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
             <button class="tab" data-tab="connectors" type="button">Connectors</button>
           </div>
           <div class="actions">
-            ${publicUrl}
-            ${publishBtn}
             <a class="btn small" href="/openclaw" target="_blank" rel="noreferrer">Open console</a>
             <a class="btn small" href="/lite" target="_blank" rel="noreferrer">Admin</a>
           </div>

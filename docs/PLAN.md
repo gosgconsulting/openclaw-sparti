@@ -109,3 +109,159 @@ Prioritized backlog, current focus, and definition of done for refactor tasks.
 - **README.md** (root): Describe multi-tenant mode: instance-scoped state dirs, one gateway process per instance, and that “another account” uses a different instance (different process/config).
 - **docs/README.md**: Module map for any new modules (e.g. instance-manager, instance-scoped gateway); clarify that `/lite` and `/onboard` are instance-scoped when multi-tenant is enabled.
 - **TODO.md**: Track “child OpenClaw per user” tasks (instance state dir, gateway manager, auth/routing, proxy, bootstrap, backup).
+
+
+---
+
+## Mission Control -- Plan
+
+### Context
+
+Build a Mission Control interface inspired by [abhi1693/openclaw-mission-control](https://github.com/abhi1693/openclaw-mission-control): a centralized operations and governance surface with work orchestration, approval-driven governance, structured audit visibility, and agent lifecycle management -- built inside this existing app, not as a separate stack.
+
+---
+
+### Findings (existing systems)
+
+| Area | Current state | Reusable? |
+|------|---------------|-----------|
+| **Gateway control** | `/lite/api/gateway/*` -- start/stop/restart, uptime, logs | Yes -- reuse as-is |
+| **Activity log** | `/lite/api/logs` -- real-time log streaming | Yes -- extend to structured audit store |
+| **Session monitoring** | `/lite/api/stats` via gateway RPC | Yes -- reuse |
+| **Memory management** | `/lite/api/memory/*` | Yes -- reuse |
+| **Cron viewer** | `/lite/api/cron` | Yes -- reuse |
+| **Security audit** | `/lite/api/security-audit` | Yes -- reuse |
+| **Version / upgrade** | `/lite/api/version`, `/lite/api/upgrade` | Yes -- reuse |
+| **Backup / restore** | `/lite/api/restore` | Yes -- reuse |
+| **Web terminal** | `/lite/ws` xterm.js | Yes -- reuse |
+| **Connector OAuth** | `/dashboard/connectors/*` + Composio | Yes -- reuse |
+| **Supabase auth** | `requireUser()`, sessions, cookies | Yes -- all new routes use this |
+| **Config schema** | `src/schema/` Ajv sections | Yes -- extend for new entities |
+| **Instances table** | One row per user, metadata only | Extend -- add board/task/approval binding |
+| **Work orchestration** | Not present | Build new |
+| **Approval queue** | Only pairing approval exists | Build new |
+| **Multi-agent lifecycle** | Single gateway per deployment | Future (depends on multi-tenant plan) |
+| **Audit trail (structured)** | Not present -- log stream only | Build new |
+| **Gateway federation** | Not present | Future phase |
+
+### Duplicate risks
+
+- Do **not** add a second gateway management UI -- link from Mission Control to `/lite`.
+- Do **not** add a second auth flow -- all Mission Control routes use `requireUser()`.
+- Do **not** add a second `instances` concept -- extend the existing table.
+- Do **not** duplicate Composio connector logic -- reuse `src/integrations/composio.js`.
+- Do **not** add a second log stream -- keep `/lite/api/logs` for raw gateway logs; `audit_events` table is the structured store.
+
+---
+
+### Phased execution plan
+
+#### Phase 0 -- Prerequisites (must complete before adding routes)
+
+1. **Split `server.js` into route modules** (backlog item #1). Target: `src/routes/auth.js`, `src/routes/onboard.js`, `src/routes/lite.js`, `src/routes/dashboard.js`, `src/routes/openclaw.js`. `server.js` becomes a thin mount file.
+2. **Extract config bootstrap and backup/restore** into `src/config-bootstrap.js` and `src/backup.js` (backlog item #2).
+
+#### Phase 1 -- Data model (Supabase migrations)
+
+Four new tables, all with RLS scoped to `auth.uid()`:
+
+| Table | Key columns |
+|-------|-------------|
+| `boards` | `id uuid PK`, `user_id uuid FK auth.users`, `name text`, `description text`, `status text`, `created_at` |
+| `tasks` | `id uuid PK`, `board_id uuid FK boards`, `user_id uuid FK auth.users`, `title text`, `description text`, `status text` (todo/in-progress/done), `assignee_agent text`, `tags text[]`, `created_at` |
+| `approval_requests` | `id uuid PK`, `user_id uuid FK auth.users`, `action_type text`, `payload jsonb`, `status text` (pending/approved/rejected), `decided_at timestamptz`, `decided_by text` |
+| `audit_events` | `id uuid PK`, `user_id uuid FK auth.users`, `instance_id uuid FK instances`, `event_type text`, `actor text`, `payload jsonb`, `created_at` |
+
+Tags stored as `text[]` on `tasks` -- no separate table needed initially.
+
+#### Phase 2 -- Server routes (`src/routes/mission-control.js`)
+
+New router module, mounted at `/mission-control`. All routes use `requireUser()`. No secrets in browser.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/mission-control` | Mission Control page (HTML) |
+| GET | `/mission-control/api/overview` | Gateway status + quick stats (tasks, approvals, sessions) |
+| GET | `/mission-control/api/boards` | List user's boards |
+| POST | `/mission-control/api/boards` | Create board |
+| PATCH | `/mission-control/api/boards/:id` | Update board |
+| DELETE | `/mission-control/api/boards/:id` | Archive board |
+| GET | `/mission-control/api/boards/:id/tasks` | List tasks on a board |
+| POST | `/mission-control/api/boards/:id/tasks` | Create task |
+| PATCH | `/mission-control/api/tasks/:id` | Update task (status, assignee, tags) |
+| DELETE | `/mission-control/api/tasks/:id` | Delete task |
+| GET | `/mission-control/api/approvals` | List pending approvals |
+| POST | `/mission-control/api/approvals` | Create approval request |
+| POST | `/mission-control/api/approvals/:id/decide` | Approve or reject |
+| GET | `/mission-control/api/audit` | Query audit events (filter by type, date range) |
+
+#### Phase 3 -- UI (`src/mission-control-page.js`)
+
+HTML generator following the same pattern as `dashboard-page.js` and `ui-page.js`. Vanilla JS + fetch. Sections:
+
+1. **Overview** -- gateway status card (running/stopped/uptime), quick stats (open tasks, pending approvals, active sessions).
+2. **Boards** -- list of boards; click into board shows tasks.
+3. **Tasks** -- task list with status (todo / in-progress / done), assignee agent, tags. Create/edit inline.
+4. **Approvals** -- pending approval queue; approve/reject with one click. Decision logged to audit.
+5. **Audit trail** -- paginated table of structured audit events (type, actor, timestamp, payload summary).
+6. **Gateway** -- embedded summary of gateway controls (start/stop/restart, recent log tail). Links to `/lite` for full panel.
+
+#### Phase 4 -- Audit event emission (`src/audit.js`)
+
+Thin helper: `emitAudit(supabase, { userId, instanceId, eventType, actor, payload })`. Non-blocking -- errors logged, never thrown.
+
+Emit from key server actions:
+- Gateway start / stop / restart
+- Approval decided (approved or rejected)
+- Channel saved
+- Config changed
+- Backup / restore / upgrade
+
+#### Phase 5 -- Navigation wiring
+
+- Add "Mission Control" link to `dashboard-page.js` actions bar (alongside "Admin" and "Open console").
+- Add breadcrumb link back to `/dashboard` from Mission Control page.
+
+#### Phase 6 -- Future (not in scope now)
+
+- Multi-agent lifecycle management (depends on multi-tenant Option A/B decision).
+- Gateway federation (connect and operate remote gateway environments).
+- Composio token expiry webhook -- auto-emit audit event + mark row `expired`.
+- Board groups and organizations (if multi-team use case emerges).
+
+---
+
+### Reuse targets
+
+| Module | Used for |
+|--------|---------|
+| `requireUser()` -- `src/auth-supabase.js` | All Mission Control routes |
+| `createSupabaseClient()` -- `src/supabase.js` | All DB reads/writes |
+| `getGatewayInfo()`, `isGatewayRunning()`, `getGatewayUptime()` -- `src/gateway.js` | Overview card |
+| `gatewayRPC()` -- `src/gateway-rpc.js` | Session count in overview |
+| `escapeHtml()` / `toJsonForScript()` pattern -- `*-page.js` | Mission Control page |
+| `/lite/api/status` data shape | Gateway card in Mission Control |
+
+---
+
+### Definition of done (Mission Control)
+
+- [ ] Phase 0 complete: `server.js` split into route modules; config bootstrap and backup extracted.
+- [ ] Phase 1 complete: all four Supabase migrations applied and tested with RLS.
+- [ ] Phase 2 complete: all routes return correct data; `requireUser()` enforced; no secrets in responses.
+- [ ] Phase 3 complete: Mission Control page renders all six sections; create/edit/delete/approve flows work end-to-end.
+- [ ] Phase 4 complete: `audit_events` rows emitted for all key actions; visible in Audit trail section.
+- [ ] Phase 5 complete: "Mission Control" link visible in dashboard; navigation works both ways.
+- [ ] Tests pass: `pnpm test` succeeds; no regressions in existing flows.
+- [ ] No secrets in frontend: no API keys, Supabase service role, gateway token, or Composio key in HTML/JS.
+- [ ] Docs updated: `docs/README.md` module map, `docs/LOG.md` entry, `TODO.md` progress.
+
+---
+
+### Docs to update (when implementing)
+
+- **docs/README.md**: Add `src/routes/mission-control.js`, `src/mission-control-page.js`, `src/audit.js` to module map. Update architecture diagram to include `/mission-control/*`.
+- **docs/PLAN.md**: Move completed phases to Done; update Current focus sprint.
+- **docs/LOG.md**: Dated entry per phase.
+- **TODO.md**: Track phase-by-phase execution, blockers, and verification.
+- **README.md** (root): Add Mission Control to API Endpoints table and Project Structure.
