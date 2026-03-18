@@ -6,6 +6,8 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
+- **Mission Control 500 on page load fixed (2026-03-19)** — `getMissionControlPageHTML` was crashing at render time with `ReferenceError: p is not defined`. Two unescaped `${p.slug}` interpolations in the Prompts table template (lines 2068, 2076) were being evaluated server-side instead of client-side. Fixed by escaping both to `\${esc(p.slug)}`. Verified with `node --eval` import test.
+
 - **Composio auth configs catalog (2026-03-19)** — Connectors tab now dynamically built from the 30 auth configs in the Composio account. No more hardcoded 3-connector list. New API key `ak_AFQDM9XqtOvTxTPab9lQ` confirmed working. See Done section.
 
 

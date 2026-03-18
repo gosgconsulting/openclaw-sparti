@@ -2065,7 +2065,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
             <th>Shortcode</th><th>Name</th><th>Type</th><th>Description</th><th>Uses</th><th>Last used</th><th></th>
           </tr></thead>
           <tbody>\${prompts.map(p => \`<tr>
-            <td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;">/${p.slug}</code></td>
+            <td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;">/\${esc(p.slug)}</code></td>
             <td style="font-weight:500;">\${esc(p.name)}</td>
             <td><span style="background:\${typeColors[p.type]||'#64748b'}22;color:\${typeColors[p.type]||'#64748b'};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">\${p.type}</span></td>
             <td style="color:#64748b;font-size:13px;">\${esc(p.description||'')}</td>
@@ -2073,7 +2073,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
             <td style="color:#64748b;font-size:12px;">\${p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : '—'}</td>
             <td style="white-space:nowrap;">
               <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="editPrompt(\${JSON.stringify(p).replace(/"/g,'&quot;')})">Edit</button>
-              <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;color:#ef4444;" onclick="deletePrompt('${p.slug}')">Delete</button>
+              <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;color:#ef4444;" onclick="deletePrompt('\${esc(p.slug)}')">Delete</button>
             </td>
           </tr>\`).join('')}
           </tbody>
