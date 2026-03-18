@@ -6,12 +6,19 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
+- **Composio API-key connect flow (2026-03-19)** — Bot can now connect API-key-based integrations (SendGrid, Perplexity, Stripe, Tavily, etc.) directly from chat without any OAuth redirect. See Done section.
+
+
+
+- **Mission Control Integrations panel + dashboard refactor (2026-03-19)** — Integrations panel (Channels + Connectors tabs) added to Mission Control sidebar. "Open console" button added to MC dashboard panel. Dashboard link removed from MC sidebar footer. Skills tab removed from `/dashboard` (Channels + Connectors only remain). See Done section.
+
 - **Mission Control event wiring (2026-03-18)** — Bot actions now auto-emit to `mc_audit_events`. See Done section.
 - **Composio connector fixes (2026-03-19)** — Two bugs fixed: `google_super` ToolkitNotFound 404 and GitHub OAuth callback auth loop. See Done section.
 - **Mission Control v2 implemented (2026-03-18)** — Full dashboard matching openclaw-mission-control reference UI. Supabase migrations applied. 66/66 tests pass.
 - **Skills tab + bundled skills** — Skills tab added to dashboard. `composio-connect` and `polymarket-clob` skills are now bundled and auto-activated for every account on every boot.
 - **TOOLS.md now always overwritten on boot** — Bot will see all bundled skills (including `composio-connect`) in its system prompt after next gateway restart.
 - **Sparti Context feature implemented (2026-03-19)** — Bot can now read brands, agents, projects, copilot tools from the Sparti database and launch agents or trigger edge functions directly from chat.
+- **Sparti Context bot auth fixed (2026-03-19)** — Added `requireUserOrBot()` to `auth-supabase.js`. `/api/sparti/*` now accepts `SETUP_PASSWORD` Bearer + `x-user-id` header. Admin client + `scopeToUser()` used for bot path to maintain user data isolation without requiring a browser session.
 - **Prompts / shortcode system implemented (2026-03-19)** — `mc_prompts` table live. `/mission-control/api/prompts` CRUD + `/run` endpoint. `prompt-runner` and `skill-creator` skills bundled. Prompts panel in Mission Control UI. Bridge columns on `mc_agents` and `mc_boards`.
 
 ---
@@ -38,7 +45,9 @@ Active tasks, next steps, blockers, and verification notes.
 
 ### Sparti Context (follow-up)
 
-- **Install `sparti-context` skill** — Copy `skills/sparti-context/` to the OpenClaw gateway's skills directory or use `npx clawhub install` if published. Then enable it from `/dashboard#tab=skills`.
+- **Skills are auto-bundled** ✅ — `sparti-context`, `prompt-runner`, `skill-creator` are in `skills/` → copied to `/bundled-skills/` in Docker → synced to `$OPENCLAW_STATE_DIR/skills/` on every boot by `entrypoint.sh` → auto-enabled by `runPostStartupTasks`. No manual install needed.
+- **Bot auth fixed** ✅ — `/api/sparti/*` now accepts `SETUP_PASSWORD` Bearer + `x-user-id` header via `requireUserOrBot()`. Admin client used for bot path; `scopeToUser()` adds `user_id` filter to all queries so data is still user-scoped.
+- **Set `SPARTI_USER_ID` env var** — Set the Supabase user UUID in Railway env vars so the `sparti-context` skill can auto-populate `x-user-id` without asking the user each time.
 - **Test agent launch**: ask the bot "launch my SEO agent for brand X" → bot should call `GET /api/sparti/agents`, find the agent, call `POST /api/sparti/agents/:id/launch` with `brand_id`, and reply with the agent's response.
 - **Test edge function trigger**: ask the bot "run project-doc-planner" → bot should call `POST /api/sparti/edge/workflow-ai` with `{ "workflow": "project-doc-planner" }`.
 - **Test account summary**: ask the bot "show me my Sparti account" → bot should call `GET /api/sparti/summary` and format the counts.
@@ -77,6 +86,18 @@ Active tasks, next steps, blockers, and verification notes.
 ---
 
 ## Done
+
+- **Composio API-key connect flow (2026-03-19):**
+  - `src/integrations/composio.js` — Added `connectWithApiKey(userId, toolkitKey, credentials, authScheme, composioApiKey)`. Supports `API_KEY`, `BEARER_TOKEN`, and `BASIC` auth schemes via `AuthScheme` helpers from `@composio/core`. Connection is immediately active — no redirect.
+  - `src/server.js` — Added `POST /api/composio/connect-api-key` endpoint (SETUP_PASSWORD Bearer auth). Bot passes `toolkitKey`, `credentials`, and optional `authScheme`. Returns `{ ok: true, connectedAccountId }`.
+  - `skills/composio-connect/SKILL.md` — Updated to v1.1.0. Now covers both OAuth flow (redirect link) and API-key flow (immediate). Includes auth type table for 30+ services, step-by-step decision logic, and error handling for both flows.
+  - `README.md` — Added `POST /api/composio/connect-api-key` to Bot Connect Link API section. Updated Pre-bundled Skills table description for `composio-connect`.
+
+
+
+- **Mission Control Integrations panel + dashboard refactor (2026-03-19):**
+  - `src/mission-control-page.js` — Added "Integrations" nav section with Channels + Connectors sub-tabs. Channels tab loads channel groups from `/api/schemas` + current config from `/lite/api/config` and renders save forms posting to `/dashboard/channels/:name`. Connectors tab mirrors the `/dashboard` connectors panel (loads from `/dashboard/connectors`, supports connect/reconnect/disconnect). Added "Open console" button to Dashboard panel header linking to `/openclaw`. Removed "Dashboard" link from sidebar footer. Added CSS for integration card styles and active tab indicator.
+  - `src/dashboard-page.js` — Removed Skills tab button, Skills panel HTML, `loadSkills()`, `toggleSkill()`, skills event listener. Only Channels and Connectors tabs remain.
 
 - **Prompts / shortcode system (2026-03-19):**
   - `supabase/migrations/20260319_mc_prompts_and_bridges.sql` — `mc_prompts` table (RLS, unique slug per user, usage tracking) + bridge columns on `mc_agents`/`mc_boards`. Migration applied to Supabase.

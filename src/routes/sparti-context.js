@@ -2,7 +2,9 @@
  * Sparti Context Router
  *
  * Mounted at /api/sparti in server.js.
- * All routes require Supabase auth via requireUser().
+ * All routes require auth via requireUserOrBot():
+ *   - Browser/dashboard: Supabase session cookie (RLS-scoped user client)
+ *   - Bot/skill: SETUP_PASSWORD Bearer token + x-user-id header (admin client + scopeToUser filter)
  *
  * Provides read access to the user's Sparti account data:
  *   - brands
@@ -333,18 +335,16 @@ router.post('/agents/:id/launch', async (req, res) => {
   const { message, brand_id, project_id, model } = req.body || {};
 
   // Load agent
-  const { data: aiAgent } = await supabase
-    .from('ai_agents')
-    .select('id,name,instructions,questions')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const { data: aiAgent } = await scopeToUser(
+    supabase.from('ai_agents').select('id,name,instructions,questions').eq('id', req.params.id),
+    req,
+  ).maybeSingle();
 
   const { data: customAgent } = !aiAgent
-    ? await supabase
-        .from('custom_agents')
-        .select('id,name,instructions,questions')
-        .eq('id', req.params.id)
-        .maybeSingle()
+    ? await scopeToUser(
+        supabase.from('custom_agents').select('id,name,instructions,questions').eq('id', req.params.id),
+        req,
+      ).maybeSingle()
     : { data: null };
 
   const agent = aiAgent || customAgent;
@@ -353,11 +353,10 @@ router.post('/agents/:id/launch', async (req, res) => {
   // Optionally enrich system prompt with brand context
   let brandContext = '';
   if (brand_id) {
-    const { data: brand } = await supabase
-      .from('brands')
-      .select('name,description,brand_voice,industry,key_selling_points')
-      .eq('id', brand_id)
-      .maybeSingle();
+    const { data: brand } = await scopeToUser(
+      supabase.from('brands').select('name,description,brand_voice,industry,key_selling_points').eq('id', brand_id),
+      req,
+    ).maybeSingle();
     if (brand) {
       brandContext = `\n\nBrand context:\n- Name: ${brand.name}\n- Industry: ${brand.industry || 'N/A'}\n- Brand voice: ${brand.brand_voice || 'N/A'}\n- Description: ${brand.description || 'N/A'}`;
       if (Array.isArray(brand.key_selling_points) && brand.key_selling_points.length > 0) {
@@ -369,11 +368,10 @@ router.post('/agents/:id/launch', async (req, res) => {
   // Optionally enrich with project context
   let projectContext = '';
   if (project_id) {
-    const { data: project } = await supabase
-      .from('projects')
-      .select('title,description,global_prompt')
-      .eq('id', project_id)
-      .maybeSingle();
+    const { data: project } = await scopeToUser(
+      supabase.from('projects').select('title,description,global_prompt').eq('id', project_id),
+      req,
+    ).maybeSingle();
     if (project) {
       projectContext = `\n\nProject context:\n- Title: ${project.title}\n- Description: ${project.description || 'N/A'}`;
       if (project.global_prompt) projectContext += `\n- Instructions: ${project.global_prompt}`;
@@ -430,18 +428,16 @@ router.post('/agents/:id/chat', async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  const { data: aiAgent } = await supabase
-    .from('ai_agents')
-    .select('id,name,instructions')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const { data: aiAgent } = await scopeToUser(
+    supabase.from('ai_agents').select('id,name,instructions').eq('id', req.params.id),
+    req,
+  ).maybeSingle();
 
   const { data: customAgent } = !aiAgent
-    ? await supabase
-        .from('custom_agents')
-        .select('id,name,instructions')
-        .eq('id', req.params.id)
-        .maybeSingle()
+    ? await scopeToUser(
+        supabase.from('custom_agents').select('id,name,instructions').eq('id', req.params.id),
+        req,
+      ).maybeSingle()
     : { data: null };
 
   const agent = aiAgent || customAgent;
@@ -449,11 +445,10 @@ router.post('/agents/:id/chat', async (req, res) => {
 
   let brandContext = '';
   if (brand_id) {
-    const { data: brand } = await supabase
-      .from('brands')
-      .select('name,brand_voice,industry')
-      .eq('id', brand_id)
-      .maybeSingle();
+    const { data: brand } = await scopeToUser(
+      supabase.from('brands').select('name,brand_voice,industry').eq('id', brand_id),
+      req,
+    ).maybeSingle();
     if (brand) {
       brandContext = `\n\nBrand: ${brand.name} | Industry: ${brand.industry || 'N/A'} | Voice: ${brand.brand_voice || 'N/A'}`;
     }
@@ -461,11 +456,10 @@ router.post('/agents/:id/chat', async (req, res) => {
 
   let projectContext = '';
   if (project_id) {
-    const { data: project } = await supabase
-      .from('projects')
-      .select('title,global_prompt')
-      .eq('id', project_id)
-      .maybeSingle();
+    const { data: project } = await scopeToUser(
+      supabase.from('projects').select('title,global_prompt').eq('id', project_id),
+      req,
+    ).maybeSingle();
     if (project) {
       projectContext = `\n\nProject: ${project.title}${project.global_prompt ? ` | ${project.global_prompt}` : ''}`;
     }
@@ -557,11 +551,11 @@ router.get('/summary', async (req, res) => {
   const supabase = getSupabaseForRequest(req);
 
   const [brands, aiAgents, customAgents, projects, copilotInstances, appTools] = await Promise.all([
-    supabase.from('brands').select('id', { count: 'exact', head: true }),
-    supabase.from('ai_agents').select('id', { count: 'exact', head: true }),
-    supabase.from('custom_agents').select('id', { count: 'exact', head: true }),
-    supabase.from('projects').select('id', { count: 'exact', head: true }),
-    supabase.from('copilot_instances').select('id', { count: 'exact', head: true }),
+    scopeToUser(supabase.from('brands').select('id', { count: 'exact', head: true }), req),
+    scopeToUser(supabase.from('ai_agents').select('id', { count: 'exact', head: true }), req),
+    scopeToUser(supabase.from('custom_agents').select('id', { count: 'exact', head: true }), req),
+    scopeToUser(supabase.from('projects').select('id', { count: 'exact', head: true }), req),
+    scopeToUser(supabase.from('copilot_instances').select('id', { count: 'exact', head: true }), req),
     supabase.from('app_tools').select('id', { count: 'exact', head: true }).eq('is_active', true),
   ]);
 

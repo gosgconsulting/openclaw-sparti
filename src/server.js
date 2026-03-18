@@ -41,6 +41,7 @@ import {
   generateConnectLink,
   listComposioConnectedAccounts,
   disconnectComposioAccount,
+  connectWithApiKey,
 } from './integrations/composio.js';
 
 // Configuration
@@ -1316,6 +1317,51 @@ app.post('/api/composio/connect-link', async (req, res) => {
   } catch (err) {
     console.error('[api/composio/connect-link] error:', err.message);
     return res.status(502).json({ error: err.message || 'Failed to generate connect link' });
+  }
+});
+
+// ── Bot-accessible API-key connect endpoint ───────────────────────────────────
+// For services that use API_KEY, BEARER_TOKEN, or BASIC auth (no OAuth redirect).
+// Called by the composio-connect skill when the user provides a key directly.
+// Connection is immediately active — no redirect needed.
+//
+// POST /api/composio/connect-api-key
+// Body: { toolkitKey: string, credentials: { api_key?: string, token?: string, username?: string, password?: string }, authScheme?: 'API_KEY'|'BEARER_TOKEN'|'BASIC' }
+// Response: { connectedAccountId: string, ok: true }
+app.post('/api/composio/connect-api-key', async (req, res) => {
+  const pw = (process.env.SETUP_PASSWORD || '').toString();
+  if (!pw || !hasValidSetupPassword(req, res, pw)) {
+    return res.status(401).json({ error: 'Authentication required. Send SETUP_PASSWORD as Bearer token.' });
+  }
+
+  const toolkitKey = typeof req.body?.toolkitKey === 'string' ? req.body.toolkitKey.trim() : '';
+  if (!toolkitKey) {
+    return res.status(400).json({ error: 'toolkitKey is required' });
+  }
+
+  const credentials = req.body?.credentials;
+  if (!credentials || typeof credentials !== 'object') {
+    return res.status(400).json({ error: 'credentials object is required (e.g. { api_key: "..." })' });
+  }
+
+  const authScheme = typeof req.body?.authScheme === 'string' ? req.body.authScheme.toUpperCase() : 'API_KEY';
+  const validSchemes = ['API_KEY', 'BEARER_TOKEN', 'BASIC'];
+  if (!validSchemes.includes(authScheme)) {
+    return res.status(400).json({ error: `authScheme must be one of: ${validSchemes.join(', ')}` });
+  }
+
+  const composioApiKey = await getComposioApiKey();
+  if (!composioApiKey) {
+    return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY.' });
+  }
+
+  try {
+    const botUserId = 'bot-shared';
+    const { connectedAccountId } = await connectWithApiKey(botUserId, toolkitKey, credentials, authScheme, composioApiKey);
+    return res.json({ ok: true, connectedAccountId });
+  } catch (err) {
+    console.error('[api/composio/connect-api-key] error:', err.message);
+    return res.status(502).json({ error: err.message || 'Failed to connect with API key' });
   }
 });
 

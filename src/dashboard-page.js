@@ -298,7 +298,6 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
           <div class="tabs" role="tablist" aria-label="Dashboard tabs">
             <button class="tab active" data-tab="channels" type="button">Channels</button>
             <button class="tab" data-tab="connectors" type="button">Connectors</button>
-            <button class="tab" data-tab="skills" type="button">Skills</button>
           </div>
           <div class="actions">
             <a class="btn small" href="/mission-control">⚡ Mission Control</a>
@@ -320,13 +319,6 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         <div id="connectors-list" class="channel-grid"></div>
       </div>
 
-      <div class="card panel" id="panel-skills">
-        <h2 class="section-title">Skills</h2>
-        <div class="muted" style="margin-bottom:10px;">Skills extend the bot with new capabilities. Bundled skills are auto-enabled on every boot.</div>
-        <div id="skills-error" class="error" style="display:none;"></div>
-        <div id="skills-loading" class="muted">Loading…</div>
-        <div id="skills-list" class="channel-grid"></div>
-      </div>
     </div>
   </main>
   <script>
@@ -337,9 +329,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
       document.getElementById('panel-channels').classList.toggle('active', tab === 'channels');
       document.getElementById('panel-connectors').classList.toggle('active', tab === 'connectors');
-      document.getElementById('panel-skills').classList.toggle('active', tab === 'skills');
       if (tab === 'connectors') loadConnectors();
-      if (tab === 'skills') loadSkills();
       history.replaceState(null, '', '#tab=' + tab);
     }
 
@@ -480,97 +470,6 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       }
     }
 
-    async function loadSkills() {
-      const loading = document.getElementById('skills-loading');
-      const list = document.getElementById('skills-list');
-      const err = document.getElementById('skills-error');
-      if (list.dataset.loaded === '1') {
-        loading.style.display = 'none';
-        return;
-      }
-      err.style.display = 'none';
-      loading.style.display = 'block';
-      list.innerHTML = '';
-
-      try {
-        const res = await fetch('/dashboard/api/skills', { headers: { 'Accept': 'application/json' } });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json && json.error ? json.error : ('HTTP ' + res.status));
-        const items = Array.isArray(json.skills) ? json.skills : [];
-
-        function skillEmoji(name) {
-          const n = String(name || '').toLowerCase();
-          if (n.includes('search') || n.includes('searx')) return '🔎';
-          if (n.includes('composio') || n.includes('connect')) return '🔌';
-          if (n.includes('polymarket') || n.includes('market')) return '📈';
-          if (n.includes('browser') || n.includes('web')) return '🌐';
-          if (n.includes('github')) return '🐙';
-          if (n.includes('slack')) return '💬';
-          if (n.includes('google')) return '🟦';
-          return '🧩';
-        }
-
-        function renderSkill(s) {
-          const name = escapeHtml(s.name || '');
-          const desc = escapeHtml(s.description || '');
-          const version = s.version ? escapeHtml(String(s.version)) : '';
-          const enabled = s.enabled === true;
-          const statusBadge = enabled
-            ? '<span class="badge on">Enabled</span>'
-            : '<span class="badge off">Disabled</span>';
-          const toggleLabel = enabled ? 'Disable' : 'Enable';
-          const toggleStyle = enabled ? 'border-color: rgba(255,92,92,0.35);' : '';
-          return '' +
-            '<div class="channel-card">' +
-              '<div class="channel-head">' +
-                '<div class="channel-title">' +
-                  '<span class="icon"><span class="emoji">' + escapeHtml(skillEmoji(s.name)) + '</span></span>' +
-                  '<div>' +
-                    '<div class="name">' + name + (version ? ' <span class="mono" style="font-weight:400;opacity:0.6;">v' + version + '</span>' : '') + '</div>' +
-                    (desc ? '<div class="muted" style="margin-top:2px;">' + desc + '</div>' : '') +
-                  '</div>' +
-                '</div>' +
-                '<div class="channel-meta">' + statusBadge + '</div>' +
-              '</div>' +
-              '<div style="margin-top:10px;" class="row" style="justify-content:flex-end;">' +
-                '<button class="btn small" type="button" data-skill-toggle="' + name + '" style="' + toggleStyle + '">' + toggleLabel + '</button>' +
-              '</div>' +
-            '</div>';
-        }
-
-        if (items.length === 0) {
-          list.innerHTML = '<div class="muted">No skills installed.</div>';
-        } else {
-          list.innerHTML = items.map(renderSkill).join('');
-        }
-        list.dataset.loaded = '1';
-      } catch (e) {
-        err.textContent = (e && e.message) ? e.message : 'Failed to load skills';
-        err.style.display = 'block';
-      } finally {
-        loading.style.display = 'none';
-      }
-    }
-
-    async function toggleSkill(name) {
-      const err = document.getElementById('skills-error');
-      err.style.display = 'none';
-      try {
-        const res = await fetch('/dashboard/api/skills/' + encodeURIComponent(name) + '/toggle', {
-          method: 'POST',
-          headers: { 'Accept': 'application/json' },
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json && json.error ? json.error : ('HTTP ' + res.status));
-        const list = document.getElementById('skills-list');
-        if (list) list.dataset.loaded = '';
-        loadSkills();
-      } catch (e) {
-        err.textContent = (e && e.message) ? e.message : 'Toggle failed';
-        err.style.display = 'block';
-      }
-    }
-
     function escapeHtml(s) {
       return String(s)
         .replaceAll('&', '&amp;')
@@ -589,15 +488,8 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       if (!action || !key) return;
       runConnectorAction(action, key);
     });
-    document.getElementById('panel-skills').addEventListener('click', (ev) => {
-      const btn = ev.target && ev.target.closest ? ev.target.closest('button[data-skill-toggle]') : null;
-      if (!btn) return;
-      const name = btn.getAttribute('data-skill-toggle');
-      if (!name) return;
-      toggleSkill(name);
-    });
     const m = location.hash.match(/tab=([a-z]+)/);
-    if (m && (m[1] === 'connectors' || m[1] === 'channels' || m[1] === 'skills')) setTab(m[1]);
+    if (m && (m[1] === 'connectors' || m[1] === 'channels')) setTab(m[1]);
 
     // Show flash after Composio OAuth callback redirect.
     if (/connect=success/.test(location.hash)) {

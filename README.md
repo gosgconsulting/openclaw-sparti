@@ -101,7 +101,7 @@ All skills in `skills/` are bundled into the Docker image and auto-activated for
 | Skill | Description |
 |-------|-------------|
 | **searxng-local** | Web search via SearXNG. Set `SEARXNG_URL` to point at your instance (see [OpenClaw + SearXNG template](https://railway.com/deploy/jOiw-W)) |
-| **composio-connect** | Lets the bot generate and send Composio OAuth Connect Links directly in chat. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
+| **composio-connect** | Lets the bot connect any integration via Composio — OAuth redirect link for apps like GitHub/Slack/Google, or direct API-key setup for services like SendGrid/Perplexity/Stripe. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
 | **polymarket-clob** | Polymarket CLOB API geoblock guardrail. Routes order placement through `POLYMARKET_PROXY_URL` when set; blocks order attempts and informs the user when not set. Read-only market data always works. |
 | **sparti-context** | Access the user's Sparti account (brands, agents, projects, copilot tools) and launch agents or trigger Supabase edge functions directly from the bot. Requires Supabase auth. |
 | **prompt-runner** | Intercept `/shortcode` messages and execute saved Mission Control prompts — workflows, agent launches, edge functions, and composite steps. |
@@ -543,7 +543,8 @@ Connection state is persisted in the `composio_connections` Supabase table (see 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/composio/connect-link` | Generate a Composio Connect Link from inside the bot. Body: `{ toolkitKey, origin? }`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
+| POST | `/api/composio/connect-link` | Generate a Composio OAuth Connect Link from inside the bot. Body: `{ toolkitKey, origin? }`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
+| POST | `/api/composio/connect-api-key` | Connect a service using an API key, Bearer token, or Basic auth — no OAuth redirect needed. Body: `{ toolkitKey, credentials: { api_key?, token?, username?, password? }, authScheme? }`. Returns `{ ok: true, connectedAccountId }`. Connection is immediately active. Protected by `SETUP_PASSWORD` Bearer token. |
 
 ### Sparti Context (Supabase auth required)
 

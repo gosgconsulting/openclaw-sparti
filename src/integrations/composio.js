@@ -1,4 +1,4 @@
-import { Composio } from '@composio/core';
+import { Composio, AuthScheme } from '@composio/core';
 
 function withTimeout(ms) {
   const ctrl = new AbortController();
@@ -170,4 +170,39 @@ export async function disconnectComposioAccount(connectedAccountId, apiKey) {
   } finally {
     done();
   }
+}
+
+/**
+ * Connect a service using an API key (no OAuth redirect needed).
+ * Works for any Composio toolkit that uses API_KEY, BEARER_TOKEN, or BASIC auth.
+ * The connection is immediately active — no redirect required.
+ *
+ * @param {string} userId - Supabase user UUID (used as Composio user_id)
+ * @param {string} toolkitKey - Composio toolkit slug (e.g. 'sendgrid', 'perplexityai')
+ * @param {{ api_key?: string, token?: string, username?: string, password?: string }} credentials
+ * @param {'API_KEY'|'BEARER_TOKEN'|'BASIC'} [authScheme] - defaults to 'API_KEY'
+ * @param {string} [composioApiKey] - Explicit Composio API key; falls back to COMPOSIO_API_KEY env var
+ * @returns {Promise<{ connectedAccountId: string }>}
+ */
+export async function connectWithApiKey(userId, toolkitKey, credentials, authScheme = 'API_KEY', composioApiKey) {
+  const composio = getComposioClient(composioApiKey);
+
+  let schemeConfig;
+  if (authScheme === 'BEARER_TOKEN') {
+    schemeConfig = AuthScheme.BearerToken({ token: credentials.token || credentials.api_key || '' });
+  } else if (authScheme === 'BASIC') {
+    schemeConfig = AuthScheme.Basic({ username: credentials.username || '', password: credentials.password || '' });
+  } else {
+    schemeConfig = AuthScheme.APIKey({ api_key: credentials.api_key || credentials.token || '' });
+  }
+
+  const connection = await composio.connectedAccounts.initiate(
+    userId,
+    toolkitKey.toUpperCase(),
+    { config: schemeConfig }
+  );
+
+  return {
+    connectedAccountId: toSafeString(connection.id ?? connection.connectedAccountId ?? connection.connected_account_id ?? ''),
+  };
 }

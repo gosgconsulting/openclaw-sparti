@@ -14,11 +14,14 @@ All endpoints are on this same server: `http://localhost:$PORT` (use `$PORT` env
 
 ## Authentication
 
-All requests require the `SETUP_PASSWORD` as a Bearer token:
+All requests use `SETUP_PASSWORD` as a Bearer token plus a `x-user-id` header identifying the Supabase user:
 
 ```
 Authorization: Bearer $SETUP_PASSWORD
+x-user-id: <supabase-user-id>
 ```
+
+The `x-user-id` value is the Supabase UUID of the user whose data you are reading. OpenClaw stores this as the account owner's user ID — use the value from the `SPARTI_USER_ID` env var if set, or ask the user for their Supabase user ID once and remember it for the session.
 
 ---
 

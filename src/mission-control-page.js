@@ -647,6 +647,32 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     /* ── Pagination ── */
     .pagination { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; }
 
+    /* ── Integration tabs ── */
+    .itab-active { background: var(--accent) !important; color: white !important; border-color: var(--accent) !important; }
+
+    /* ── Integration channel cards ── */
+    .int-channel-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .int-channel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+    .int-channel-title { display:flex; align-items:flex-start; gap:10px; }
+    .int-channel-name { font-weight:700; font-size:14px; color:var(--text); }
+    .int-channel-desc { font-size:12px; color:var(--muted); margin-top:2px; }
+    .int-badge { display:inline-flex; align-items:center; padding:3px 9px; border-radius:20px; font-size:11px; font-weight:700; border:1px solid var(--border); background:var(--surface2); color:var(--muted); }
+    .int-badge.on { background:var(--success-bg); color:var(--success); border-color:#b2f2bb; }
+    .int-badge.off { background:var(--surface2); color:var(--muted); }
+    .int-channel-form { display:grid; gap:10px; }
+    .int-field { display:flex; flex-direction:column; gap:4px; }
+    .int-field label { font-size:12px; font-weight:600; color:var(--text2); }
+    .int-field input { padding:7px 10px; border:1px solid var(--border2); border-radius:6px; font-size:13px; color:var(--text); background:var(--surface); outline:none; transition:border-color 0.15s; }
+    .int-field input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(25,113,194,0.1); }
+    .int-fields-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width:600px) { .int-fields-grid { grid-template-columns:1fr; } }
+    .int-channels-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+
     /* ── Responsive ── */
     @media (max-width: 768px) {
       .sidebar { transform: translateX(-100%); }
@@ -700,6 +726,9 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     <div class="nav-section-label">Automation</div>
     <div class="nav-item" data-panel="prompts"><span class="nav-icon">⚡</span> Prompts</div>
 
+    <div class="nav-section-label">Integrations</div>
+    <div class="nav-item" data-panel="integrations"><span class="nav-icon">🔌</span> Integrations</div>
+
     <div class="nav-section-label">Administration</div>
     <div class="nav-item" data-panel="organization"><span class="nav-icon">⊞</span> Organization</div>
     <div class="nav-item" data-panel="gateways"><span class="nav-icon">⊞</span> Gateways</div>
@@ -707,7 +736,6 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
 
     <div class="nav-section-label" style="margin-top:8px;"></div>
     <div class="nav-item" onclick="window.location='/lite'"><span class="nav-icon">↗</span> Lite Panel</div>
-    <div class="nav-item" onclick="window.location='/dashboard'"><span class="nav-icon">←</span> Dashboard</div>
   </nav>
 
   <!-- ── Main ── -->
@@ -717,9 +745,12 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
 
     <!-- Dashboard / Overview -->
     <div id="panel-dashboard" class="panel">
-      <div class="page-header">
-        <div class="page-title">Dashboard</div>
-        <div class="page-sub">System overview and recent activity.</div>
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div class="page-title">Dashboard</div>
+          <div class="page-sub">System overview and recent activity.</div>
+        </div>
+        <a class="btn btn-secondary" href="/openclaw" target="_blank" rel="noreferrer">↗ Open console</a>
       </div>
       <div class="stats-grid" id="ov-stats">
         <div class="stat-card"><div class="stat-label">Gateway</div><div class="stat-value" id="ov-gw">—</div><div class="stat-sub" id="ov-gw-uptime"></div></div>
@@ -975,6 +1006,33 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       <div id="agents-list"><span class="spinner"></span></div>
     </div>
 
+    <!-- Integrations -->
+    <div id="panel-integrations" class="panel">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div class="page-title">Integrations</div>
+          <div class="page-sub">Manage channels and external connectors.</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-secondary" id="itab-channels" onclick="setIntegrationTab('channels')">Channels</button>
+          <button class="btn btn-secondary" id="itab-connectors" onclick="setIntegrationTab('connectors')">Connectors</button>
+        </div>
+      </div>
+
+      <!-- Channels sub-panel -->
+      <div id="ipanel-channels">
+        <div id="integrations-channels-content"><span class="spinner"></span></div>
+      </div>
+
+      <!-- Connectors sub-panel -->
+      <div id="ipanel-connectors" style="display:none;">
+        <div class="page-sub" style="margin-bottom:12px;">Powered by Composio. Connections are configured server-side.</div>
+        <div id="integrations-connectors-error" class="flash error" style="display:none;"></div>
+        <div id="integrations-connectors-loading" style="color:var(--muted);font-size:13px;">Loading…</div>
+        <div id="integrations-connectors-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;"></div>
+      </div>
+    </div>
+
     <!-- Prompts -->
     <div id="panel-prompts" class="panel">
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
@@ -1218,6 +1276,9 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       if (name === 'gateways') loadGateway();
       if (name === 'agents') loadAgents();
       if (name === 'prompts') loadPrompts();
+      if (name === 'integrations') {
+        setIntegrationTab(currentIntTab);
+      }
     }
     navItems.forEach(n => n.addEventListener('click', () => setPanel(n.dataset.panel)));
 
@@ -2070,9 +2131,214 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
     }
 
+    // ── Integrations ───────────────────────────────────────────────────────────
+    let intChannelGroupsLoaded = false;
+    let intConnectorsLoaded = false;
+    let currentIntTab = 'channels';
+
+    function setIntegrationTab(tab) {
+      currentIntTab = tab;
+      document.getElementById('ipanel-channels').style.display = tab === 'channels' ? '' : 'none';
+      document.getElementById('ipanel-connectors').style.display = tab === 'connectors' ? '' : 'none';
+      document.getElementById('itab-channels').classList.toggle('itab-active', tab === 'channels');
+      document.getElementById('itab-connectors').classList.toggle('itab-active', tab === 'connectors');
+      if (tab === 'channels' && !intChannelGroupsLoaded) loadIntChannels();
+      if (tab === 'connectors' && !intConnectorsLoaded) loadIntConnectors();
+    }
+
+    async function loadIntChannels() {
+      const el = document.getElementById('integrations-channels-content');
+      el.innerHTML = '<span class="spinner"></span>';
+      try {
+        const res = await fetch('/lite/api/config', { headers: { Accept: 'application/json' } });
+        const cfgJson = res.ok ? await res.json() : {};
+        const channelsCfg = (cfgJson.config && cfgJson.config.channels) ? cfgJson.config.channels : {};
+
+        const chRes = await fetch('/api/schemas', { headers: { Accept: 'application/json' } });
+        const chJson = chRes.ok ? await chRes.json() : {};
+        const groups = Array.isArray(chJson.channelGroups) ? chJson.channelGroups : [];
+
+        if (!groups.length) {
+          el.innerHTML = '<div class="empty"><div class="empty-icon">📡</div><div class="empty-title">No channels available</div><div class="empty-sub">Channel definitions could not be loaded.</div></div>';
+          intChannelGroupsLoaded = true;
+          return;
+        }
+
+        const popular = groups.filter(c => c.category === 'popular');
+        const more = groups.filter(c => c.category !== 'popular');
+
+        function renderIntChannelCard(ch) {
+          const cfg = channelsCfg[ch.name] || {};
+          const enabled = !!cfg.enabled;
+          const fields = (ch.fields || []).map(f => {
+            const val = cfg[f.id] != null ? esc(String(cfg[f.id])) : '';
+            const type = f.type === 'password' ? 'password' : 'text';
+            return \`<div class="int-field">
+              <label for="int-\${esc(ch.name)}-\${esc(f.id)}">\${esc(f.label || f.id)}</label>
+              <input id="int-\${esc(ch.name)}-\${esc(f.id)}" name="\${esc(f.id)}" type="\${type}" placeholder="\${esc(f.placeholder || '')}" value="\${val}"/>
+            </div>\`;
+          }).join('');
+          const help = ch.helpUrl ? \`<div style="font-size:12px;color:var(--muted);"><a href="\${esc(ch.helpUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent);">Docs</a>\${ch.note ? ' · ' + esc(ch.note) : ''}</div>\` : (ch.note ? \`<div style="font-size:12px;color:var(--muted);">\${esc(ch.note)}</div>\` : '');
+          const icon = ch.emoji ? \`<span style="font-size:20px;">\${esc(ch.emoji)}</span>\` : \`<span style="font-size:16px;">💬</span>\`;
+          return \`<div class="int-channel-card">
+            <div class="int-channel-head">
+              <div class="int-channel-title">
+                \${icon}
+                <div>
+                  <div class="int-channel-name">\${esc(ch.displayName || ch.name)}</div>
+                  \${ch.description ? \`<div class="int-channel-desc">\${esc(ch.description)}</div>\` : ''}
+                </div>
+              </div>
+              <span class="int-badge \${enabled ? 'on' : 'off'}">\${enabled ? 'Enabled' : 'Not set'}</span>
+            </div>
+            <form class="int-channel-form" method="POST" action="/dashboard/channels/\${encodeURIComponent(ch.name)}">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text2);">
+                <input type="checkbox" name="enabled" value="true" \${enabled ? 'checked' : ''}/>
+                Enabled
+              </label>
+              \${fields ? \`<div class="int-fields-grid">\${fields}</div>\` : ''}
+              \${help}
+              <div>
+                <button class="btn btn-primary btn-sm" type="submit">Save</button>
+              </div>
+            </form>
+          </div>\`;
+        }
+
+        el.innerHTML = \`
+          \${popular.length ? '<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;">Channels</div>' : ''}
+          <div class="int-channels-grid">\${popular.map(renderIntChannelCard).join('')}</div>
+          \${more.length ? '<div style="font-size:13px;font-weight:700;color:var(--text2);margin:18px 0 10px;">More</div>' : ''}
+          \${more.length ? \`<div class="int-channels-grid">\${more.map(renderIntChannelCard).join('')}</div>\` : ''}
+        \`;
+        intChannelGroupsLoaded = true;
+      } catch (err) {
+        el.innerHTML = \`<div class="flash error">Failed to load channels: \${esc(err.message)}</div>\`;
+      }
+    }
+
+    async function loadIntConnectors() {
+      const loading = document.getElementById('integrations-connectors-loading');
+      const list = document.getElementById('integrations-connectors-list');
+      const errEl = document.getElementById('integrations-connectors-error');
+      errEl.style.display = 'none';
+      loading.style.display = 'block';
+      list.innerHTML = '';
+      try {
+        const res = await fetch('/dashboard/connectors', { headers: { Accept: 'application/json' } });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'HTTP ' + res.status);
+        const items = Array.isArray(json.connectors) ? json.connectors : [];
+        const configured = json.configured === true;
+
+        function connectorEmoji(key) {
+          const k = String(key || '').toLowerCase();
+          if (k.includes('google')) return '🟦';
+          if (k.includes('github')) return '🐙';
+          if (k.includes('slack')) return '💬';
+          if (k.includes('web')) return '🔎';
+          return '🔌';
+        }
+
+        function renderIntConnector(c) {
+          const key = String(c.key || c.id || c.name || 'connector');
+          const name = esc(c.name || c.displayName || c.key || 'Connector');
+          const desc = c.description ? \`<div class="int-channel-desc">\${esc(c.description)}</div>\` : '';
+          const badges = c.badges || {};
+          const isUnavailable = badges.unavailable === true;
+          const provider = c.provider || 'composio';
+          const accounts = Array.isArray(c.accounts) ? c.accounts : [];
+
+          const statusLabel = badges.connected ? 'Connected' : (isUnavailable ? 'Unavailable' : 'Not connected');
+          const statusCls = badges.connected ? 'on' : 'off';
+
+          const accountLines = accounts.length
+            ? accounts.map(a => {
+                const label = esc(a.email || a.label || a.id || 'Account');
+                return \`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
+                  <span style="font-size:12px;font-family:monospace;color:var(--text2);">\${label}</span>
+                  <div style="display:flex;gap:6px;">
+                    <button class="btn btn-secondary btn-sm" data-int-action="reconnect" data-int-key="\${esc(key)}">Reconnect</button>
+                    <button class="btn btn-danger btn-sm" data-int-action="disconnect" data-int-key="\${esc(key)}">Disconnect</button>
+                  </div>
+                </div>\`;
+              }).join('')
+            : '<div style="font-size:12px;color:var(--muted);margin-top:6px;">No accounts connected.</div>';
+
+          const addBtn = provider !== 'builtin' && !isUnavailable
+            ? \`<button class="btn btn-primary btn-sm" data-int-action="connect" data-int-key="\${esc(key)}">Add account</button>\`
+            : (isUnavailable ? \`<button class="btn btn-secondary btn-sm" disabled style="opacity:0.45;cursor:not-allowed;" title="\${esc(c.unavailableReason || 'Unavailable')}">Add account</button>\` : '');
+
+          const warning = isUnavailable && c.unavailableReason
+            ? \`<div style="font-size:12px;color:var(--warn);margin-top:8px;">⚠ \${esc(c.unavailableReason)}</div>\`
+            : (!configured && provider === 'composio')
+              ? \`<div style="font-size:12px;color:var(--muted);margin-top:8px;">Set <code>COMPOSIO_API_KEY</code> to enable Composio connectors.</div>\`
+              : '';
+
+          return \`<div class="int-channel-card">
+            <div class="int-channel-head">
+              <div class="int-channel-title">
+                <span style="font-size:20px;">\${connectorEmoji(key)}</span>
+                <div>
+                  <div class="int-channel-name">\${name}</div>
+                  \${desc}
+                </div>
+              </div>
+              <span class="int-badge \${statusCls}">\${statusLabel}</span>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+                <span style="font-size:12px;color:var(--muted);">Accounts</span>
+                \${addBtn}
+              </div>
+              \${accountLines}
+              \${warning}
+            </div>
+          </div>\`;
+        }
+
+        list.innerHTML = items.length
+          ? items.map(renderIntConnector).join('')
+          : '<div style="color:var(--muted);font-size:13px;">No connectors available.</div>';
+
+        intConnectorsLoaded = true;
+      } catch (err) {
+        errEl.textContent = err.message || 'Failed to load connectors';
+        errEl.style.display = 'block';
+      } finally {
+        loading.style.display = 'none';
+      }
+    }
+
+    document.getElementById('integrations-connectors-list').addEventListener('click', async (ev) => {
+      const btn = ev.target.closest ? ev.target.closest('button[data-int-action][data-int-key]') : null;
+      if (!btn) return;
+      const action = btn.getAttribute('data-int-action');
+      const key = btn.getAttribute('data-int-key');
+      if (!action || !key) return;
+      const errEl = document.getElementById('integrations-connectors-error');
+      errEl.style.display = 'none';
+      try {
+        const res = await fetch('/dashboard/connectors/' + encodeURIComponent(key) + '/' + encodeURIComponent(action), {
+          method: 'POST', headers: { Accept: 'application/json' },
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error || 'HTTP ' + res.status);
+        if (json.redirectUrl) { window.location.href = json.redirectUrl; return; }
+        intConnectorsLoaded = false;
+        loadIntConnectors();
+      } catch (err) {
+        errEl.textContent = err.message || 'Action failed';
+        errEl.style.display = 'block';
+      }
+    });
+
     // ── Init ───────────────────────────────────────────────────────────────────
     const hash = location.hash.replace('#', '');
-    const validPanels = ['dashboard','live-feed','board-groups','boards','kanban','tags','approvals','custom-fields','marketplace','packs','organization','gateways','agents','prompts'];
+    const validPanels = ['dashboard','live-feed','board-groups','boards','kanban','tags','approvals','custom-fields','marketplace','packs','organization','gateways','agents','prompts','integrations'];
+    // Set initial active state for integration tabs
+    document.getElementById('itab-channels').classList.add('itab-active');
+
     if (hash && validPanels.includes(hash)) {
       setPanel(hash);
     } else {
