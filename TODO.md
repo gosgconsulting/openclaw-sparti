@@ -6,8 +6,10 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
-- **Mission Control implemented** — Phases 1–5 complete. Apply SQL migration before testing (see Next).
+- **Composio connector fixes (2026-03-19)** — Two bugs fixed: `google_super` ToolkitNotFound 404 and GitHub OAuth callback auth loop. See Done section.
+- **Mission Control v2 implemented (2026-03-18)** — Full dashboard matching openclaw-mission-control reference UI. Supabase migrations applied. 66/66 tests pass.
 - **Skills tab + bundled skills** — Skills tab added to dashboard. `composio-connect` and `polymarket-clob` skills are now bundled and auto-activated for every account on every boot.
+- **Sparti Context feature implemented (2026-03-19)** — Bot can now read brands, agents, projects, copilot tools from the Sparti database and launch agents or trigger edge functions directly from chat.
 
 ---
 
@@ -15,9 +17,17 @@ Active tasks, next steps, blockers, and verification notes.
 
 ### Mission Control (follow-up)
 
-- **Apply Supabase migration** — Run `supabase/migrations/20260318_mission_control.sql` against your Supabase project to create `boards`, `tasks`, `approval_requests`, `audit_events` tables with RLS.
+- **Migration applied** ✅ — `mc_boards`, `mc_tasks`, `mc_approval_requests`, `mc_audit_events`, `mc_tags`, `mc_agents`, `mc_board_groups` all live in Supabase with RLS.
 - **Wire `emitAudit` into gateway actions** — Add `emitAudit` calls in `server.js` for gateway start/stop/restart (`/lite/api/gateway/*`) and channel save (`POST /dashboard/channels/:name`) to complete the audit trail.
 - **Phase 0 (server.js split)** — `server.js` is ~2500 lines. Split into `src/routes/auth.js`, `src/routes/onboard.js`, `src/routes/lite.js`, `src/routes/dashboard.js`, `src/routes/openclaw.js`. Extract `src/config-bootstrap.js` and `src/backup.js`.
+
+### Sparti Context (follow-up)
+
+- **Install `sparti-context` skill** — Copy `skills/sparti-context/` to the OpenClaw gateway's skills directory or use `npx clawhub install` if published. Then enable it from `/dashboard#tab=skills`.
+- **Test agent launch**: ask the bot "launch my SEO agent for brand X" → bot should call `GET /api/sparti/agents`, find the agent, call `POST /api/sparti/agents/:id/launch` with `brand_id`, and reply with the agent's response.
+- **Test edge function trigger**: ask the bot "run project-doc-planner" → bot should call `POST /api/sparti/edge/workflow-ai` with `{ "workflow": "project-doc-planner" }`.
+- **Test account summary**: ask the bot "show me my Sparti account" → bot should call `GET /api/sparti/summary` and format the counts.
+- **Optional: `SUPABASE_EDGE_FUNCTIONS` env var** — Set a comma-separated list of edge function slugs to restrict which functions the bot can invoke (e.g. `llmgateway-chat,workflow-ai,brand-voice-profile`). Without it, the full curated list is available.
 
 ### Pending (pre-existing)
 
@@ -52,6 +62,31 @@ Active tasks, next steps, blockers, and verification notes.
 ---
 
 ## Done
+
+- **Sparti Context feature (2026-03-19):**
+  - `src/routes/sparti-context.js` — Express router at `/api/sparti/*` (12 endpoints, all `requireUser()`). Reads `brands`, `ai_agents`, `custom_agents`, `projects`, `copilot_instances`, `copilot_templates`, `app_tools` from Sparti DB using user's access token (RLS-scoped). Exposes agent launch + chat via `llmgateway-chat` edge fn. Exposes generic edge function invocation at `POST /api/sparti/edge/:slug`.
+  - `skills/sparti-context/SKILL.md` + `_meta.json` — Bot skill teaching OpenClaw to use all Sparti context endpoints, including agent launch/chat workflows and edge function triggers (project-doc-planner, content-writing-workflow, etc.).
+  - `server.js` — Mounted `spartiContextRouter` at `/api/sparti`.
+  - `README.md` — Added Sparti Context API section and skill to Pre-bundled Skills table.
+
+- **Composio connector fixes (2026-03-19):**
+  - **Bug 1 — `google_super` ToolkitNotFound 404:** Added `googleworkspace`, `google_workspace`, `google-workspace`, `googlesuperapp` to the candidate list in `pickAppByCandidates`. Removed hardcoded `'google_super'` fallback — `googleKey` is now `null` when not found in catalog. Connectors that aren't in the catalog render with an `unavailable` badge, a disabled Connect button, and a yellow warning message explaining the issue. No more silent 404 from Composio.
+  - **Bug 2 — GitHub OAuth callback auth loop:** Removed `requireUser()` from `GET /dashboard/connectors/callback`. Added `setComposioCallbackCookie` (called at connect/reconnect time) that stores `{ userId, toolkitKey }` in a `httpOnly`, `sameSite=lax`, 15-minute cookie. Callback reads this cookie to identify the user without needing a live Supabase session. Falls back to live session if cookie is missing. Uses service-role Supabase client for the DB upsert. Added `connect=success` / `connect=failed` hash flash messages in the dashboard UI.
+
+- **Mission Control v2 (2026-03-18) — full reference UI:**
+  - Rebuilt `src/mission-control-page.js` to match openclaw-mission-control reference screenshots exactly.
+  - Light-mode design with Inter font, sidebar nav matching reference: Dashboard, Live feed, Board groups, Boards, Tags, Approvals, Custom fields, Marketplace, Packs, Organization, Gateways, Agents.
+  - Kanban board view: Inbox / In Progress / Review / Done columns with task cards, priority badges (HIGH/MEDIUM/LOW), assignee chips, tag pills.
+  - Board/List view toggle on task panel.
+  - Tags panel: color picker, slug, task count, edit/delete.
+  - Agents panel: status dot (online/offline/busy), board assignment, edit/delete.
+  - Skills Marketplace: reuses `/dashboard/api/skills`, search + category + risk filters, table view.
+  - Gateways panel: running/stopped badge, start/stop/restart, log tail.
+  - Live Feed panel: audit event stream with icons.
+  - Board Groups: CRUD with modal.
+  - New Supabase tables: `mc_board_groups`, `mc_tags`, `mc_agents` + `priority`/`column_status` columns on `mc_tasks`.
+  - New API routes: board-groups CRUD, tags CRUD (with task counts), agents CRUD, live-feed.
+  - 66/66 tests pass.
 
 - **Mission Control implementation (2026-03-18):**
   - `src/audit.js` — `emitAudit(supabase, opts)` non-blocking helper.

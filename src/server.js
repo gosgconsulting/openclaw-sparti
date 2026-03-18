@@ -32,8 +32,9 @@ import { getUIPageHTML } from './ui-page.js';
 import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
 import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
-import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
+import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies, getSupabaseTokensFromRequest } from './auth-supabase.js';
 import missionControlRouter from './routes/mission-control.js';
+import spartiContextRouter from './routes/sparti-context.js';
 import {
   listComposioApps,
   generateConnectLink,
@@ -562,6 +563,9 @@ app.get('/', requireUser(), (req, res) => {
 // Mission Control
 app.use('/mission-control', missionControlRouter);
 
+// Sparti Context — brands, agents, projects, copilot tools, agent launch, edge fn invocation
+app.use('/api/sparti', spartiContextRouter);
+
 // --- Supabase auth + dashboard ---
 app.get('/auth', (req, res) => {
   const redirect = req.query.redirect || '/dashboard';
@@ -831,32 +835,57 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
     return { connected: row.status === 'active', status: row.status };
   }
 
-  const googleSuper = pickAppByCandidates(apps, ['google_super', 'google-super', 'google super', 'google', 'g-suite', 'gsuite']);
+  // Try multiple known slugs for Google — Composio has renamed this toolkit over time.
+  // 'googleworkspace' is the current canonical slug; 'google_super' was the old one.
+  const googleSuper = pickAppByCandidates(apps, [
+    'googleworkspace', 'google_workspace', 'google-workspace',
+    'google_super', 'google-super', 'googlesuperapp',
+    'google', 'g-suite', 'gsuite',
+  ]);
   const github = pickAppByCandidates(apps, ['github']);
   const slack = pickAppByCandidates(apps, ['slack']);
 
-  const googleKey = googleSuper?.key || 'google_super';
-  const githubKey = github?.key || 'github';
-  const slackKey = slack?.key || 'slack';
+  // Only use keys that actually exist in the catalog. If a toolkit is not found,
+  // mark it unavailable so the UI can show a helpful message instead of sending
+  // a wrong slug to Composio (which returns ToolkitNotFound 404).
+  const googleKey = googleSuper?.key ?? null;
+  const githubKey = github?.key ?? null;
+  const slackKey = slack?.key ?? null;
 
   // Web Search is built-in; Composio is optional.
   const connectors = [
-    {
+    ...(googleKey ? [{
       key: googleKey,
-      name: 'Google Super',
-      description: googleSuper?.description || 'Google Super App combines all Google services including Gmail, Drive, Calendar, and more.',
+      name: 'Google Workspace',
+      description: googleSuper?.description || 'Google Workspace — Gmail, Drive, Calendar, Docs, and more.',
       provider: 'composio',
       badges: { recommended: true, ...connectionBadge(googleKey) },
       accounts: [],
-    },
-    {
+    }] : [{
+      key: 'google_workspace',
+      name: 'Google Workspace',
+      description: 'Google Workspace — Gmail, Drive, Calendar, Docs, and more.',
+      provider: 'composio',
+      badges: { recommended: true, unavailable: true, connected: false },
+      accounts: [],
+      unavailableReason: 'Google Workspace toolkit not found in your Composio account. Verify your COMPOSIO_API_KEY has access to this toolkit.',
+    }]),
+    ...(githubKey ? [{
       key: githubKey,
       name: 'GitHub',
       description: github?.description || 'Source control, issues, pull requests, and workflows.',
       provider: 'composio',
       badges: { recommended: false, ...connectionBadge(githubKey) },
       accounts: [],
-    },
+    }] : [{
+      key: 'github',
+      name: 'GitHub',
+      description: 'Source control, issues, pull requests, and workflows.',
+      provider: 'composio',
+      badges: { recommended: false, unavailable: true, connected: false },
+      accounts: [],
+      unavailableReason: 'GitHub toolkit not found in your Composio account.',
+    }]),
     {
       key: 'web_search',
       name: 'Web Search',
@@ -865,14 +894,22 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
       badges: { active: true, connected: true, recommended: false },
       accounts: [],
     },
-    {
+    ...(slackKey ? [{
       key: slackKey,
       name: 'Slack',
       description: slack?.description || 'Send messages, manage channels, and automate workflows.',
       provider: 'composio',
       badges: { recommended: true, ...connectionBadge(slackKey) },
       accounts: [],
-    },
+    }] : [{
+      key: 'slack',
+      name: 'Slack',
+      description: 'Send messages, manage channels, and automate workflows.',
+      provider: 'composio',
+      badges: { recommended: true, unavailable: true, connected: false },
+      accounts: [],
+      unavailableReason: 'Slack toolkit not found in your Composio account.',
+    }]),
   ];
 
   return res.json({ connectors, configured });
@@ -880,9 +917,44 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
 
 // ── Connector OAuth actions ────────────────────────────────────────────────
 // All routes are server-side only. The browser never touches COMPOSIO_API_KEY.
-// Flow: connect → Composio issues a short-lived Connect Link → browser redirects
-//       → user completes OAuth on Composio's hosted page → Composio redirects
-//       back to /dashboard/connectors/callback → we mark the row active.
+// Flow: connect → set composio_cb cookie with userId → Composio issues a Connect Link
+//       → browser redirects → user completes OAuth on Composio's hosted page
+//       → Composio redirects back to /dashboard/connectors/callback (no auth required)
+//       → callback reads composio_cb cookie to identify user → marks row active.
+//
+// The callback is intentionally NOT behind requireUser() because the browser's
+// Supabase session cookie may have expired while the user was on Composio's OAuth
+// page. Using requireUser() on the callback causes a redirect loop: Composio →
+// /callback → /auth?redirect=/callback → login → /callback (success params intact
+// only if the redirect encoding is perfect). The composio_cb cookie is safer:
+// it's httpOnly, sameSite=strict, 15-minute TTL, and only carries the userId.
+
+const COMPOSIO_CB_COOKIE = 'composio_cb';
+
+function setComposioCallbackCookie(res, userId, toolkitKey) {
+  const payload = Buffer.from(JSON.stringify({ userId, toolkitKey, ts: Date.now() })).toString('base64');
+  res.cookie(COMPOSIO_CB_COOKIE, payload, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax', // must be lax (not strict) so the cookie is sent on the Composio redirect back
+    maxAge: 15 * 60 * 1000,
+    path: '/dashboard/connectors/callback',
+  });
+}
+
+function readComposioCallbackCookie(req) {
+  try {
+    const raw = req.cookies?.[COMPOSIO_CB_COOKIE];
+    if (!raw) return null;
+    const parsed = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
+    if (!parsed?.userId || !parsed?.toolkitKey) return null;
+    // Reject stale cookies (> 20 minutes old)
+    if (Date.now() - (parsed.ts || 0) > 20 * 60 * 1000) return null;
+    return { userId: String(parsed.userId), toolkitKey: String(parsed.toolkitKey) };
+  } catch {
+    return null;
+  }
+}
 
 app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) => {
   const toolkitKey = req.params.key;
@@ -916,6 +988,10 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
       // Non-fatal: still return the link so the user can proceed.
     }
 
+    // Set a short-lived cookie so the callback can identify the user without
+    // requiring a live Supabase session (which may expire during the OAuth flow).
+    setComposioCallbackCookie(res, userId, toolkitKey);
+
     return res.json({ redirectUrl });
   } catch (err) {
     console.error('[connectors/connect] error:', err.message);
@@ -924,20 +1000,54 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
 });
 
 // Callback from Composio after the user completes (or fails) OAuth.
-// Composio appends: ?status=success&connected_account_id=ca_xxx
-// (plus any params we embedded in the callbackUrl, e.g. toolkit=...)
-app.get('/dashboard/connectors/callback', requireUser(), async (req, res) => {
+// Composio appends: ?status=success&connected_account_id=ca_xxx&toolkit=...
+// No requireUser() here — see comment above. We identify the user via the
+// composio_cb cookie set at connect-time.
+app.get('/dashboard/connectors/callback', async (req, res) => {
   const { status, connected_account_id, toolkit } = req.query;
-  const userId = req.user.id;
-  const toolkitKey = typeof toolkit === 'string' ? toolkit.trim() : '';
+
+  // Prefer toolkit from query param (embedded in callbackUrl); fall back to cookie.
+  const cbCookie = readComposioCallbackCookie(req);
+  const toolkitKey = (typeof toolkit === 'string' && toolkit.trim())
+    ? toolkit.trim()
+    : (cbCookie?.toolkitKey || '');
+
+  // Clear the callback cookie regardless of outcome.
+  res.clearCookie(COMPOSIO_CB_COOKIE, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/dashboard/connectors/callback',
+  });
 
   if (status !== 'success' || !connected_account_id || !toolkitKey) {
-    // Auth failed or params missing — send user back to connectors tab with error.
+    return res.redirect('/dashboard#tab=connectors&connect=failed');
+  }
+
+  // Resolve userId: prefer cookie (most reliable), fall back to live session.
+  let userId = cbCookie?.userId || null;
+  if (!userId) {
+    // Try to read from live session as a last resort.
+    try {
+      const { accessToken } = getSupabaseTokensFromRequest(req);
+      if (accessToken) {
+        const supabase = createSupabaseClient({ accessToken });
+        const { data } = await supabase.auth.getUser();
+        userId = data?.user?.id || null;
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (!userId) {
+    console.error('[connectors/callback] could not identify user — no cookie and no session');
     return res.redirect('/dashboard#tab=connectors&connect=failed');
   }
 
   try {
-    const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+    // Use service-role client since we may not have a user access token here.
+    const supabase = process.env.SUPABASE_SERVICE_ROLE_KEY
+      ? createSupabaseAdminClient()
+      : createSupabaseClient();
     const { error: dbErr } = await supabase
       .from('composio_connections')
       .upsert(
@@ -989,6 +1099,9 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
     if (dbErr) {
       console.error('[connectors/reconnect] db upsert error:', dbErr.message);
     }
+
+    // Same cookie as connect — callback needs it to identify the user.
+    setComposioCallbackCookie(res, userId, toolkitKey);
 
     return res.json({ redirectUrl });
   } catch (err) {

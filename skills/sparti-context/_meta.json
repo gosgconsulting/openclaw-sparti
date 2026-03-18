@@ -1,0 +1,7 @@
+{
+  "name": "sparti-context",
+  "version": "1.0.0",
+  "description": "Access the user's Sparti account — brands, agents, projects, copilot tools — and launch agents or trigger Supabase edge functions directly from the bot.",
+  "author": "openclaw-sparti",
+  "tags": ["sparti", "brands", "agents", "projects", "copilot", "edge-functions", "workflow"]
+}

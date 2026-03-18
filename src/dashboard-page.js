@@ -384,12 +384,16 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
           const badges = (c && c.badges && typeof c.badges === 'object') ? c.badges : {};
           const accounts = Array.isArray(c?.accounts) ? c.accounts : [];
 
+          const isUnavailable = badges && badges.unavailable === true;
+          const unavailableReason = c && c.unavailableReason ? String(c.unavailableReason) : '';
+
           const badgeBits = [];
           if (provider === 'builtin') badgeBits.push(badgeHtml('Built-in', 'on'));
           if (badges && badges.recommended) badgeBits.push(badgeHtml('Recommended', 'on'));
           if (badges && badges.active) badgeBits.push(badgeHtml('Active', 'on'));
           if (badges && badges.connected) badgeBits.push(badgeHtml('Connected', 'on'));
-          if (!badges?.connected && provider !== 'builtin') badgeBits.push(badgeHtml('Not connected', 'off'));
+          if (isUnavailable) badgeBits.push(badgeHtml('Unavailable', 'off'));
+          else if (!badges?.connected && provider !== 'builtin') badgeBits.push(badgeHtml('Not connected', 'off'));
 
           const accountLines = accounts.length
             ? accounts.map(a => {
@@ -404,14 +408,16 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
               }).join('')
             : '<div class="muted" style="margin-top:8px;">No accounts connected.</div>';
 
-          const canAddAccount = provider !== 'builtin';
+          const canAddAccount = provider !== 'builtin' && !isUnavailable;
           const addAccountBtn = canAddAccount
             ? '<button class="btn small" type="button" data-action="connect" data-key="' + escapeHtml(key) + '">Add account</button>'
-            : '';
+            : (isUnavailable ? '<button class="btn small" type="button" disabled title="' + escapeHtml(unavailableReason || 'Toolkit not available in your Composio account') + '" style="opacity:0.45;cursor:not-allowed;">Add account</button>' : '');
 
-          const warning = (!configured && provider === 'composio')
-            ? '<div class="help" style="margin-top:10px;">Set <span class="mono">COMPOSIO_API_KEY</span> on the server to enable Composio connectors.</div>'
-            : '';
+          const warning = isUnavailable && unavailableReason
+            ? '<div class="help" style="margin-top:10px;color:rgba(255,180,50,0.9);">⚠ ' + escapeHtml(unavailableReason) + '</div>'
+            : (!configured && provider === 'composio')
+              ? '<div class="help" style="margin-top:10px;">Set <span class="mono">COMPOSIO_API_KEY</span> on the server to enable Composio connectors.</div>'
+              : '';
 
           return '' +
             '<div class="channel-card">' +
@@ -592,6 +598,21 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     });
     const m = location.hash.match(/tab=([a-z]+)/);
     if (m && (m[1] === 'connectors' || m[1] === 'channels' || m[1] === 'skills')) setTab(m[1]);
+
+    // Show flash after Composio OAuth callback redirect.
+    if (/connect=success/.test(location.hash)) {
+      const f = document.createElement('div');
+      f.id = 'connect-flash';
+      f.textContent = '✓ Connector linked successfully.';
+      f.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#0d3d2e;color:#00e5cc;border:1px solid #00e5cc44;border-radius:8px;padding:12px 20px;font-size:13px;z-index:9999;';
+      document.body.appendChild(f);
+      setTimeout(() => { f.style.opacity = '0'; f.style.transition = 'opacity 0.5s'; setTimeout(() => f.remove(), 500); }, 5000);
+      history.replaceState(null, '', location.hash.replace(/&?connect=success/, ''));
+    } else if (/connect=failed/.test(location.hash)) {
+      const err = document.getElementById('connectors-error');
+      if (err) { err.textContent = 'OAuth connection failed or was cancelled. Please try again.'; err.style.display = 'block'; }
+      history.replaceState(null, '', location.hash.replace(/&?connect=failed/, ''));
+    }
 
     // Auto-clear save flash after 5s
     const flash = document.getElementById('save-flash');

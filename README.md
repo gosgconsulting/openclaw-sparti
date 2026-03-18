@@ -103,6 +103,7 @@ All skills in `skills/` are bundled into the Docker image and auto-activated for
 | **searxng-local** | Web search via SearXNG. Set `SEARXNG_URL` to point at your instance (see [OpenClaw + SearXNG template](https://railway.com/deploy/jOiw-W)) |
 | **composio-connect** | Lets the bot generate and send Composio OAuth Connect Links directly in chat. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
 | **polymarket-clob** | Polymarket CLOB API geoblock guardrail. Routes order placement through `POLYMARKET_PROXY_URL` when set; blocks order attempts and informs the user when not set. Read-only market data always works. |
+| **sparti-context** | Access the user's Sparti account (brands, agents, projects, copilot tools) and launch agents or trigger Supabase edge functions directly from the bot. Requires Supabase auth. |
 
 Skills can be enabled/disabled per-account from the **Skills** tab in the dashboard (`/dashboard#tab=skills`).
 
@@ -541,6 +542,44 @@ Connection state is persisted in the `composio_connections` Supabase table (see 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/composio/connect-link` | Generate a Composio Connect Link from inside the bot. Body: `{ toolkitKey, origin? }`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
+
+### Sparti Context (Supabase auth required)
+
+Read the user's Sparti account data and launch agents or invoke edge functions from the bot.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sparti/summary` | Account summary — brand/agent/project/copilot counts |
+| GET | `/api/sparti/brands` | List all brands |
+| GET | `/api/sparti/brands/:id` | Get a specific brand |
+| GET | `/api/sparti/agents` | List all agents (ai_agents + custom_agents) |
+| GET | `/api/sparti/agents/:id` | Get a specific agent |
+| GET | `/api/sparti/projects` | List all projects |
+| GET | `/api/sparti/projects/:id` | Get a specific project |
+| GET | `/api/sparti/copilot-tools` | List copilot instances, templates, and app tools |
+| GET | `/api/sparti/copilot-tools/instances/:id` | Get a specific copilot instance |
+| GET | `/api/sparti/edge-functions` | List available Supabase edge functions |
+| POST | `/api/sparti/agents/:id/launch` | Launch an agent session (calls `llmgateway-chat` edge fn) |
+| POST | `/api/sparti/agents/:id/chat` | Chat with an agent (calls `llmgateway-chat` edge fn) |
+| POST | `/api/sparti/edge/:slug` | Invoke any Supabase edge function by slug |
+
+**Agent launch/chat body:**
+```json
+{
+  "message": "optional initial message",
+  "brand_id": "optional brand UUID for context",
+  "project_id": "optional project UUID for context",
+  "model": "optional model override"
+}
+```
+
+**Edge function invocation:**
+```
+POST /api/sparti/edge/workflow-ai
+{ "workflow": "project-doc-planner", "brand_id": "..." }
+```
+
+The `sparti-context` skill (in `skills/sparti-context/`) teaches the bot to use all of these endpoints.
 
 ### Other (password required)
 
