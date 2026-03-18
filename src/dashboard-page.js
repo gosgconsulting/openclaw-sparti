@@ -316,6 +316,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         <div class="muted" style="margin-bottom:10px;">Powered by Composio. Connections are configured server-side.</div>
         <div id="connectors-error" class="error" style="display:none;"></div>
         <div id="connectors-loading" class="muted">Loading…</div>
+        <input type="search" id="connectors-search" placeholder="Search connectors…" class="search-input" style="width:100%;max-width:320px;margin-bottom:12px;padding:8px 12px;border:1px solid var(--border, #333);border-radius:6px;background:var(--bg2, #1a1a1a);color:inherit;font-size:14px;" />
         <div id="connectors-list" class="channel-grid"></div>
       </div>
 

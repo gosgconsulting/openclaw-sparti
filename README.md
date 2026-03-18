@@ -544,7 +544,7 @@ Connection state is persisted in the `composio_connections` Supabase table (see 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/composio/connect-link` | Generate a Composio OAuth Connect Link from inside the bot. Body: `{ toolkitKey, origin? }`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
-| POST | `/api/composio/connect-api-key` | Connect a service using an API key, Bearer token, or Basic auth — no OAuth redirect needed. Body: `{ toolkitKey, credentials: { api_key?, token?, username?, password? }, authScheme? }`. Returns `{ ok: true, connectedAccountId }`. Connection is immediately active. Protected by `SETUP_PASSWORD` Bearer token. |
+| POST | `/api/composio/connect-api-key` | Connect a service using an API key, Bearer token, or Basic auth — no OAuth redirect needed. Body: `{ toolkitKey, credentials: { api_key?, token?, username?, password? }, authScheme? }`. Returns `{ ok: true, connectedAccountId }`. Connection is immediately active. Protected by `SETUP_PASSWORD` Bearer token. Users can paste the key in chat (e.g. "connect productive.io with api: xyz"); the bot calls this endpoint and confirms without echoing the key. |
 
 ### Sparti Context (Supabase auth required)
 

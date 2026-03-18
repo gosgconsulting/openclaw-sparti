@@ -1,7 +1,7 @@
 ---
 name: composio-connect
 description: Connect any integration via Composio — OAuth redirect link or direct API-key setup — directly from the bot
-version: 1.1.0
+version: 1.2.0
 metadata:
   openclaw:
     requires:
@@ -25,48 +25,90 @@ Use this skill when the user asks to:
 - "Get a magic link to connect [any app]"
 - "Link my [app] via Composio"
 - "Connect [app] using my API key"
+- **"Connect [app] with api: xyz"** or **"Connect productive.io with api: my-key-123"** — user pastes the API key in the same message; connect immediately via Flow 2 (no redirect).
 - "Set up [app] integration"
 - "Add my [app] credentials to Composio"
 
 ---
 
+## Direct API key in message (connect in one step)
+
+When the user sends a **single message** that includes both the app name and the API key, extract both and call the connect-api-key endpoint right away. Do not ask for the key again.
+
+**Message patterns to recognize:**
+- "connect [app] with api: [key]"
+- "connect [app] with api key [key]"
+- "connect [app] api: [key]"
+- "link [app] with api: [key]"
+- "add [app] api key: [key]"
+
+**Examples:** "connect productive.io with api: xyz", "connect vercel with api key v_abc123", "link ahrefs api: ahrefs_xxx"
+
+**What to do:**
+1. Extract the **app name** (e.g. productive.io, vercel, ahrefs) and the **API key** (the part after "api:", "api key", etc.). Do not echo or repeat the key in your reply.
+2. Derive **toolkitKey**: If the app is in the auth type table below, use its `toolkitKey`. Otherwise normalize the app name to a slug: lowercase, replace spaces and dots with underscores (e.g. `productive.io` → `productive_io`). Some Composio toolkits drop punctuation (e.g. `productiveio`); if the API returns an error like "toolkit not found", suggest the user check the exact toolkit name in Composio or use the dashboard Connectors list.
+3. Call `POST /api/composio/connect-api-key` with:
+   - `toolkitKey`: the slug from step 2
+   - `credentials`: `{ "api_key": "<extracted key>" }`
+   - `authScheme`: `"API_KEY"` (default)
+4. On success, reply with a short confirmation **without** repeating the key, e.g. "✓ Productive.io connected. The integration is ready to use."
+5. On error (e.g. 502 with "toolkit not found"), tell the user the integration may not be configured in this Composio account and suggest they use the dashboard Connectors tab to see available integrations.
+
+**Security:** Never include the user's API key in your reply. Do not log it or echo it back.
+
+---
+
 ## Auth type reference
+
+These are the auth configs configured in the Sparti Composio account (43 total):
 
 | App | toolkitKey | Auth type |
 |-----|-----------|-----------|
 | GitHub | `github` | OAuth |
 | Slack | `slack` | OAuth |
-| Google / Gmail / Drive / Calendar | `googleworkspace` | OAuth |
+| Gmail | `gmail` | OAuth |
+| Google Drive | `googledrive` | OAuth |
+| Google Sheets | `googlesheets` | OAuth |
+| Google Docs | `googledocs` | OAuth |
+| Google Calendar | `googlecalendar` | OAuth |
+| Google Slides | `googleslides` | OAuth |
+| Google Ads | `googleads` | OAuth |
+| Google Analytics | `google_analytics` | OAuth |
+| Google Search Console | `google_search_console` | OAuth |
+| Google Meet | `googlemeet` | OAuth |
 | Notion | `notion` | OAuth |
-| Linear | `linear` | OAuth |
-| Jira | `jira` | OAuth |
 | HubSpot | `hubspot` | OAuth |
 | Salesforce | `salesforce` | OAuth |
-| Airtable | `airtable` | OAuth |
-| Asana | `asana` | OAuth |
-| Trello | `trello` | OAuth |
 | Discord | `discord` | OAuth |
-| Twitter / X | `twitter` | OAuth |
 | LinkedIn | `linkedin` | OAuth |
-| Dropbox | `dropbox` | OAuth |
+| Instagram | `instagram` | OAuth |
+| Facebook | `facebook` | OAuth |
+| WhatsApp | `whatsapp` | OAuth |
+| YouTube | `youtube` | OAuth |
 | Zoom | `zoom` | OAuth |
-| Figma | `figma` | OAuth |
-| SendGrid | `sendgrid` | API_KEY |
-| Perplexity AI | `perplexityai` | API_KEY |
-| Tavily | `tavily` | API_KEY |
-| PostHog | `posthog` | API_KEY |
-| Resend | `resend` | API_KEY |
-| Brevo | `brevo` | API_KEY |
-| Mailgun | `mailgun` | API_KEY |
-| Stripe | `stripe` | API_KEY |
-| Twilio | `twilio` | API_KEY |
-| OpenAI | `openai` | API_KEY |
-| Anthropic | `anthropic` | API_KEY |
-| Pinecone | `pinecone` | API_KEY |
-| Serper | `serper` | API_KEY |
-| Browserless | `browserless` | BEARER_TOKEN |
+| Canva | `canva` | OAuth |
+| ClickUp | `clickup` | OAuth |
+| Asana | `asana` | OAuth |
+| Calendly | `calendly` | OAuth |
+| Eventbrite | `eventbrite` | OAuth |
+| Mailchimp | `mailchimp` | OAuth |
+| Monday.com | `monday` | OAuth |
+| Trello | `trello` | OAUTH1 |
+| Supabase | `supabase` | OAuth |
+| HeyGen | `heygen` | API_KEY |
+| Cloudflare | `cloudflare` | API_KEY |
+| Vercel | `vercel` | API_KEY |
+| Make | `make` | API_KEY |
+| Apify | `apify` | API_KEY |
+| Apollo | `apollo` | API_KEY |
+| Ahrefs | `ahrefs` | API_KEY |
+| SEMrush | `semrush` | API_KEY |
+| Pexels | `pexels` | API_KEY |
+| TripAdvisor | `tripadvisor` | API_KEY |
+| TripAdvisor Content API | `tripadvisor_content_api` | API_KEY |
+| v0 (Vercel) | `v0` | API_KEY |
 
-If the user names an app not in this list, ask them whether it uses OAuth or an API key, then use the appropriate flow.
+**Apps not in this list:** Use the normalized app name as toolkitKey (e.g. productive.io → `productive_io` or `productiveio`). If the toolkit is configured in the Composio account, the connection will succeed; otherwise the API returns an error and you can suggest the user check the dashboard Connectors list.
 
 ---
 
@@ -140,12 +182,11 @@ The connection is **immediately active** — no redirect needed. Reply to the us
 ## Step-by-step decision logic
 
 1. Identify the app from the user's message.
-2. Look up the `toolkitKey` and auth type in the table above.
-3. If **OAuth**: use Flow 1 (generate and send a redirect link).
-4. If **API_KEY / BEARER_TOKEN / BASIC**:
-   - If the user already provided their key in the message → use Flow 2 immediately.
-   - If not → ask the user for their API key, then use Flow 2.
-5. Confirm success or relay the error message.
+2. **If the user included an API key in the message** (e.g. "connect X with api: xyz") → use **Flow 2** immediately. Extract the key, derive toolkitKey (table or normalized slug), call connect-api-key. Do not ask for the key again.
+3. Otherwise, look up the `toolkitKey` and auth type in the table above.
+4. If **OAuth**: use Flow 1 (generate and send a redirect link).
+5. If **API_KEY / BEARER_TOKEN / BASIC** and no key in message: ask the user for their API key, then use Flow 2.
+6. Confirm success or relay the error message. Never echo the API key back.
 
 ---
 

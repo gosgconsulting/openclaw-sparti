@@ -6,7 +6,7 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
-- **Composio API-key connect flow (2026-03-19)** — Bot can now connect API-key-based integrations (SendGrid, Perplexity, Stripe, Tavily, etc.) directly from chat without any OAuth redirect. See Done section.
+- **Composio auth configs catalog (2026-03-19)** — Connectors tab now dynamically built from the 30 auth configs in the Composio account. No more hardcoded 3-connector list. New API key `ak_AFQDM9XqtOvTxTPab9lQ` confirmed working. See Done section.
 
 
 
@@ -86,6 +86,14 @@ Active tasks, next steps, blockers, and verification notes.
 ---
 
 ## Done
+
+- **Bot connect API directly (2026-03-19):** composio-connect skill v1.2.0 — users can send one message with app name and API key (e.g. "connect productive.io with api: xyz"). Skill now includes a "Direct API key in message" section: patterns to recognize, extraction rules, toolkitKey derivation for unknown apps (normalize to slug), and security rule to never echo the key. Step-by-step decision logic updated to prioritize "key in message" → Flow 2 (connect-api-key) immediately. No server changes; existing POST /api/composio/connect-api-key already supports any toolkitKey. README Bot Connect Link section updated with one-line note on direct API key in chat.
+
+- **Composio auth configs catalog (2026-03-19):**
+  - `src/integrations/composio.js` — Added `listComposioAuthConfigs()` using `GET /api/v3/auth_configs`. Returns only the toolkits actually configured in the account (vs. the global catalog of thousands).
+  - `src/server.js` — Replaced hardcoded 3-connector list with dynamic build from auth configs. Added `TOOLKIT_META` map for display names/descriptions for all 43 configured toolkits. Removed unused `pickAppByCandidates`, `normalizeKey`, and `listComposioApps` import. Connectors now sort recommended-first then alphabetically.
+  - `skills/composio-connect/SKILL.md` — Updated auth type table to match all 43 auth configs in the account.
+  - API key `ak_AFQDM9XqtOvTxTPab9lQ` verified working — returns all 43 auth configs. Key is read from `COMPOSIO_API_KEY` Railway env var (Supabase `app_settings` table does not exist).
 
 - **Composio API-key connect flow (2026-03-19):**
   - `src/integrations/composio.js` — Added `connectWithApiKey(userId, toolkitKey, credentials, authScheme, composioApiKey)`. Supports `API_KEY`, `BEARER_TOKEN`, and `BASIC` auth schemes via `AuthScheme` helpers from `@composio/core`. Connection is immediately active — no redirect.

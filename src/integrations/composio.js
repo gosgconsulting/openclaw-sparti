@@ -18,6 +18,50 @@ function getComposioClient(explicitApiKey) {
 }
 
 /**
+ * List auth configs created in this Composio account.
+ * These are the toolkits that are actually configured and ready to use —
+ * as opposed to the global app catalog which lists every possible toolkit.
+ * Uses server-side API key; never call from browser.
+ *
+ * @param {{ apiKey?: string, limit?: number }} opts
+ * @returns {Promise<Array<{ id: string, name: string, toolkit: string, authScheme: string, status: string }>>}
+ */
+export async function listComposioAuthConfigs({ apiKey, limit = 100 } = {}) {
+  const key = toSafeString(apiKey).trim();
+  if (!key) throw new Error('Missing COMPOSIO_API_KEY');
+
+  const { signal, done } = withTimeout(12000);
+  try {
+    const res = await fetch(`https://backend.composio.dev/api/v3/auth_configs?limit=${Math.min(limit, 1000)}`, {
+      method: 'GET',
+      headers: { 'x-api-key': key, 'accept': 'application/json' },
+      signal,
+    });
+
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+
+    if (!res.ok) {
+      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : `Composio HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+
+    const raw = Array.isArray(json?.items) ? json.items : [];
+    return raw.map(c => ({
+      id: toSafeString(c?.id || ''),
+      name: toSafeString(c?.name || c?.toolkit?.slug || ''),
+      toolkit: toSafeString(c?.toolkit?.slug || ''),
+      authScheme: toSafeString(c?.auth_scheme || 'OAUTH2'),
+      status: toSafeString(c?.status || 'ENABLED'),
+      logo: toSafeString(c?.toolkit?.logo || ''),
+    })).filter(c => c.toolkit && c.status === 'ENABLED');
+  } finally {
+    done();
+  }
+}
+
+/**
  * List available Composio apps (connectors catalog).
  * Uses server-side API key; never call from browser.
  */

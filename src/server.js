@@ -37,7 +37,7 @@ import missionControlRouter from './routes/mission-control.js';
 import spartiContextRouter from './routes/sparti-context.js';
 import { emitAudit } from './audit.js';
 import {
-  listComposioApps,
+  listComposioAuthConfigs,
   generateConnectLink,
   listComposioConnectedAccounts,
   disconnectComposioAccount,
@@ -58,19 +58,6 @@ function parseOptionalInt(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function normalizeKey(s) {
-  return String(s || '').trim().toLowerCase().replaceAll(/\s+/g, '_');
-}
-
-function pickAppByCandidates(apps, candidates) {
-  const want = new Set((candidates || []).map(normalizeKey).filter(Boolean));
-  if (want.size === 0) return null;
-  for (const a of apps || []) {
-    const k = normalizeKey(a?.key || a?.name);
-    if (want.has(k)) return a;
-  }
-  return null;
-}
 
 /**
  * SaaS mode bootstrap: create openclaw.json from LLM Gateway env vars if missing.
@@ -835,19 +822,68 @@ app.post('/dashboard/channels/:name', requireUser(), async (req, res) => {
   }
 });
 
+// Display names and descriptions for well-known toolkits.
+const TOOLKIT_META = {
+  slack: { name: 'Slack', description: 'Send messages, manage channels, and automate workflows.', recommended: true },
+  github: { name: 'GitHub', description: 'Source control, issues, pull requests, and workflows.', recommended: true },
+  gmail: { name: 'Gmail', description: 'Read, send, and manage Gmail messages and contacts.', recommended: true },
+  googledrive: { name: 'Google Drive', description: 'Access and manage files in Google Drive.', recommended: false },
+  googlesheets: { name: 'Google Sheets', description: 'Read and write Google Sheets spreadsheets.', recommended: false },
+  googledocs: { name: 'Google Docs', description: 'Create and edit Google Docs documents.', recommended: false },
+  googlecalendar: { name: 'Google Calendar', description: 'Manage events and schedules in Google Calendar.', recommended: false },
+  googleslides: { name: 'Google Slides', description: 'Create and edit Google Slides presentations.', recommended: false },
+  googleads: { name: 'Google Ads', description: 'Manage Google Ads campaigns and reporting.', recommended: false },
+  google_analytics: { name: 'Google Analytics', description: 'Access Google Analytics data and reports.', recommended: false },
+  google_search_console: { name: 'Google Search Console', description: 'Monitor search performance and indexing.', recommended: false },
+  googlemeet: { name: 'Google Meet', description: 'Create and manage Google Meet video meetings.', recommended: false },
+  notion: { name: 'Notion', description: 'Read and write Notion pages, databases, and blocks.', recommended: true },
+  hubspot: { name: 'HubSpot', description: 'CRM, contacts, deals, and marketing automation.', recommended: true },
+  discord: { name: 'Discord', description: 'Send messages and manage Discord servers and channels.', recommended: false },
+  linkedin: { name: 'LinkedIn', description: 'Post content and manage LinkedIn profile activity.', recommended: false },
+  instagram: { name: 'Instagram', description: 'Manage Instagram business posts, comments, and insights.', recommended: false },
+  facebook: { name: 'Facebook', description: 'Manage Facebook Pages, posts, and engagement.', recommended: false },
+  canva: { name: 'Canva', description: 'Create and manage Canva designs and assets.', recommended: false },
+  clickup: { name: 'ClickUp', description: 'Manage tasks, projects, and workspaces in ClickUp.', recommended: false },
+  asana: { name: 'Asana', description: 'Manage tasks and projects in Asana.', recommended: false },
+  calendly: { name: 'Calendly', description: 'Manage scheduling and availability in Calendly.', recommended: false },
+  eventbrite: { name: 'Eventbrite', description: 'Create and manage events on Eventbrite.', recommended: false },
+  mailchimp: { name: 'Mailchimp', description: 'Manage email campaigns and audiences in Mailchimp.', recommended: false },
+  supabase: { name: 'Supabase', description: 'Manage Supabase projects, tables, and edge functions.', recommended: false },
+  heygen: { name: 'HeyGen', description: 'Generate AI videos with HeyGen.', recommended: false },
+  cloudflare: { name: 'Cloudflare', description: 'Manage Cloudflare DNS, Workers, and Pages.', recommended: false },
+  apify: { name: 'Apify', description: 'Run web scraping and automation actors on Apify.', recommended: false },
+  apollo: { name: 'Apollo', description: 'Prospect, enrich contacts, and manage sequences in Apollo.', recommended: false },
+  ahrefs: { name: 'Ahrefs', description: 'SEO data — backlinks, keywords, site audits.', recommended: false },
+  zoom: { name: 'Zoom', description: 'Create and manage Zoom meetings and webinars.', recommended: false },
+  youtube: { name: 'YouTube', description: 'Manage YouTube videos, playlists, and channel data.', recommended: false },
+  whatsapp: { name: 'WhatsApp', description: 'Send and receive WhatsApp Business messages.', recommended: false },
+  vercel: { name: 'Vercel', description: 'Deploy and manage Vercel projects and deployments.', recommended: false },
+  trello: { name: 'Trello', description: 'Manage Trello boards, lists, and cards.', recommended: false },
+  tripadvisor: { name: 'TripAdvisor', description: 'Access TripAdvisor reviews and location data.', recommended: false },
+  tripadvisor_content_api: { name: 'TripAdvisor Content API', description: 'Access TripAdvisor content and media via the Content API.', recommended: false },
+  semrush: { name: 'SEMrush', description: 'SEO and competitive intelligence — keywords, audits, backlinks.', recommended: false },
+  salesforce: { name: 'Salesforce', description: 'CRM — contacts, leads, opportunities, and workflows.', recommended: false },
+  pexels: { name: 'Pexels', description: 'Search and download free stock photos and videos.', recommended: false },
+  monday: { name: 'Monday.com', description: 'Manage boards, items, and workflows in Monday.com.', recommended: false },
+  make: { name: 'Make', description: 'Trigger and manage Make (Integromat) automation scenarios.', recommended: false },
+  v0: { name: 'v0', description: 'Generate UI components with Vercel v0.', recommended: false },
+};
+
 app.get('/dashboard/connectors', requireUser(), async (req, res) => {
   // Server-side only — no secrets in browser.
   // Key is shared across all users: env var COMPOSIO_API_KEY or app_settings(key='composio').
   const apiKey = await getComposioApiKey();
-  let apps = [];
+  let authConfigs = [];
   let configured = false;
 
   if (apiKey) {
     try {
-      apps = await listComposioApps({ apiKey, limit: 120 });
+      // Use auth configs (v3) — these are the toolkits actually set up in this account,
+      // not the global catalog of thousands of apps. This eliminates "toolkit not found" errors.
+      authConfigs = await listComposioAuthConfigs({ apiKey, limit: 200 });
       configured = true;
     } catch (err) {
-      return res.status(502).json({ error: err.message || 'Failed to fetch Composio apps' });
+      return res.status(502).json({ error: err.message || 'Failed to fetch Composio auth configs' });
     }
   }
 
@@ -872,57 +908,59 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
     return { connected: row.status === 'active', status: row.status };
   }
 
-  // Try multiple known slugs for Google — Composio has renamed this toolkit over time.
-  // 'googleworkspace' is the current canonical slug; 'google_super' was the old one.
-  const googleSuper = pickAppByCandidates(apps, [
-    'googleworkspace', 'google_workspace', 'google-workspace',
-    'google_super', 'google-super', 'googlesuperapp',
-    'google', 'g-suite', 'gsuite',
+  // Build connector list from auth configs — one entry per toolkit.
+  // Deduplicate by toolkit slug (keep first occurrence).
+  const seenToolkits = new Set();
+  const composioConnectors = [];
+  for (const cfg of authConfigs) {
+    if (seenToolkits.has(cfg.toolkit)) continue;
+    seenToolkits.add(cfg.toolkit);
+    const meta = TOOLKIT_META[cfg.toolkit] || {};
+    composioConnectors.push({
+      key: cfg.toolkit,
+      authConfigId: cfg.id,
+      name: meta.name || cfg.name || cfg.toolkit,
+      description: meta.description || '',
+      provider: 'composio',
+      authScheme: cfg.authScheme,
+      logo: cfg.logo,
+      badges: { recommended: meta.recommended || false, ...connectionBadge(cfg.toolkit) },
+      accounts: [],
+    });
+  }
+
+  // Sort: recommended first, then alphabetically.
+  composioConnectors.sort((a, b) => {
+    if (a.badges.recommended !== b.badges.recommended) return a.badges.recommended ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  // Group Google toolkits into one "Google Workspace" card (Composio v3 has no single google_super OAuth;
+  // each service is separate — we group in the UI so one card shows all with per-service Connect).
+  const GOOGLE_TOOLKIT_KEYS = new Set([
+    'gmail', 'googledrive', 'googlesheets', 'googledocs', 'googlecalendar', 'googleslides',
+    'googleads', 'google_analytics', 'google_search_console', 'googlemeet',
   ]);
-  const github = pickAppByCandidates(apps, ['github']);
-  const slack = pickAppByCandidates(apps, ['slack']);
+  const googleConnectors = composioConnectors.filter(c => GOOGLE_TOOLKIT_KEYS.has(c.key));
+  const nonGoogleConnectors = composioConnectors.filter(c => !GOOGLE_TOOLKIT_KEYS.has(c.key));
 
-  // Only use keys that actually exist in the catalog. If a toolkit is not found,
-  // mark it unavailable so the UI can show a helpful message instead of sending
-  // a wrong slug to Composio (which returns ToolkitNotFound 404).
-  const googleKey = googleSuper?.key ?? null;
-  const githubKey = github?.key ?? null;
-  const slackKey = slack?.key ?? null;
+  const googleWorkspaceCard = googleConnectors.length > 0
+    ? {
+        key: 'google_workspace',
+        name: 'Google Workspace',
+        description: 'Gmail, Drive, Sheets, Docs, Calendar, Meet, and more. Connect each service as needed.',
+        provider: 'composio',
+        badges: {
+          recommended: true,
+          connected: googleConnectors.some(c => c.badges && c.badges.connected),
+        },
+        children: googleConnectors,
+        accounts: [],
+      }
+    : null;
 
-  // Web Search is built-in; Composio is optional.
+  // Web Search is always present (built-in). Then Google Workspace (grouped), then the rest.
   const connectors = [
-    ...(googleKey ? [{
-      key: googleKey,
-      name: 'Google Workspace',
-      description: googleSuper?.description || 'Google Workspace — Gmail, Drive, Calendar, Docs, and more.',
-      provider: 'composio',
-      badges: { recommended: true, ...connectionBadge(googleKey) },
-      accounts: [],
-    }] : [{
-      key: 'google_workspace',
-      name: 'Google Workspace',
-      description: 'Google Workspace — Gmail, Drive, Calendar, Docs, and more.',
-      provider: 'composio',
-      badges: { recommended: true, unavailable: true, connected: false },
-      accounts: [],
-      unavailableReason: 'Google Workspace toolkit not found in your Composio account. Verify your COMPOSIO_API_KEY has access to this toolkit.',
-    }]),
-    ...(githubKey ? [{
-      key: githubKey,
-      name: 'GitHub',
-      description: github?.description || 'Source control, issues, pull requests, and workflows.',
-      provider: 'composio',
-      badges: { recommended: false, ...connectionBadge(githubKey) },
-      accounts: [],
-    }] : [{
-      key: 'github',
-      name: 'GitHub',
-      description: 'Source control, issues, pull requests, and workflows.',
-      provider: 'composio',
-      badges: { recommended: false, unavailable: true, connected: false },
-      accounts: [],
-      unavailableReason: 'GitHub toolkit not found in your Composio account.',
-    }]),
     {
       key: 'web_search',
       name: 'Web Search',
@@ -931,22 +969,8 @@ app.get('/dashboard/connectors', requireUser(), async (req, res) => {
       badges: { active: true, connected: true, recommended: false },
       accounts: [],
     },
-    ...(slackKey ? [{
-      key: slackKey,
-      name: 'Slack',
-      description: slack?.description || 'Send messages, manage channels, and automate workflows.',
-      provider: 'composio',
-      badges: { recommended: true, ...connectionBadge(slackKey) },
-      accounts: [],
-    }] : [{
-      key: 'slack',
-      name: 'Slack',
-      description: 'Send messages, manage channels, and automate workflows.',
-      provider: 'composio',
-      badges: { recommended: true, unavailable: true, connected: false },
-      accounts: [],
-      unavailableReason: 'Slack toolkit not found in your Composio account.',
-    }]),
+    ...(googleWorkspaceCard ? [googleWorkspaceCard] : []),
+    ...nonGoogleConnectors,
   ];
 
   return res.json({ connectors, configured });
