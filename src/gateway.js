@@ -331,15 +331,20 @@ export async function startGateway() {
     console.log('Set memory backend to builtin');
   }
 
-  // Auto-enable bundled skills when their env vars are present.
+  // Auto-enable bundled skills that are present on disk.
+  // searxng-local is always bundled (entrypoint.sh copies it every boot), so it
+  // is enabled for every account regardless of whether SEARXNG_URL is set.
   // Note: the gateway may rewrite this on startup (v2026.2.22+), so we also
   // re-apply it after the gateway is ready (see post-startup section below).
-  if (process.env.SEARXNG_URL) {
-    config.skills = config.skills || {};
-    config.skills.entries = config.skills.entries || {};
-    if (!config.skills.entries['searxng-local']) {
-      config.skills.entries['searxng-local'] = { enabled: true };
-      console.log('Auto-enabled searxng-local skill (SEARXNG_URL is set)');
+  {
+    const searxngSkillDir = join(stateDir, 'skills', 'searxng-local');
+    if (existsSync(searxngSkillDir)) {
+      config.skills = config.skills || {};
+      config.skills.entries = config.skills.entries || {};
+      if (!config.skills.entries['searxng-local']) {
+        config.skills.entries['searxng-local'] = { enabled: true };
+        console.log('Auto-enabled searxng-local skill (skill dir present)');
+      }
     }
   }
 
@@ -483,12 +488,15 @@ export async function startGateway() {
         'The browser runs headless in a Docker container.\n\n';
     }
 
-    if (process.env.SEARXNG_URL) {
+    if (existsSync(join(stateDir, 'skills', 'searxng-local'))) {
+      const searxngNote = process.env.SEARXNG_URL
+        ? `The service URL is available in the \`SEARXNG_URL\` environment variable.`
+        : 'Set the `SEARXNG_URL` environment variable to point to your SearXNG instance.';
       toolsContent +=
         '## Web Search\n\n' +
-        'A SearXNG meta-search engine is running as a separate Railway service. ' +
-        'Use the `searxng-local` skill for web searches — read its SKILL.md for the full API reference. ' +
-        `The service URL is available in the \`SEARXNG_URL\` environment variable.\n\n`;
+        'A SearXNG meta-search engine is available for web searches. ' +
+        'Use the `searxng-local` skill — read its SKILL.md for the full API reference. ' +
+        `${searxngNote}\n\n`;
     }
 
     toolsContent +=
@@ -840,30 +848,7 @@ async function runPostStartupTasks(configFile, context = '') {
     console.warn(`Browser profile start failed${logSuffix}: ${e.message}`);
   }
 
-  // 2. Re-apply bundled skill config if the gateway dropped it during startup
-  if (process.env.SEARXNG_URL) {
-    try {
-      const liveConfig = JSON.parse(readFileSync(configFile, 'utf-8'));
-      if (!liveConfig.skills?.entries?.['searxng-local']?.enabled) {
-        liveConfig.skills = liveConfig.skills || {};
-        liveConfig.skills.entries = liveConfig.skills.entries || {};
-        liveConfig.skills.entries['searxng-local'] = { enabled: true };
-        writeFileSync(configFile, JSON.stringify(liveConfig, null, 2));
-        console.log(`Re-applied searxng-local skill${logSuffix} (file)`);
-        try {
-          const { gatewayRPC } = await import('./gateway-rpc.js');
-          await gatewayRPC('config.set', { raw: JSON.stringify(liveConfig) });
-          console.log(`Pushed searxng-local config to gateway via RPC${logSuffix}`);
-        } catch (rpcErr) {
-          console.warn(`config.set RPC for searxng-local failed${logSuffix}: ${rpcErr.message}`);
-        }
-      }
-    } catch (e) {
-      console.warn(`Failed to check/re-apply searxng-local${logSuffix}: ${e.message}`);
-    }
-  }
-
-  // 2b. Re-apply any user-installed skills found on disk
+  // 2. Re-apply any skills found on disk (includes bundled skills like searxng-local)
   try {
     const liveConfig = JSON.parse(readFileSync(configFile, 'utf-8'));
     const stateDir = process.env.OPENCLAW_STATE_DIR || '/data/.openclaw';

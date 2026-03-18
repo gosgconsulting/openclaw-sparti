@@ -96,7 +96,15 @@ Built-in Playwright with Chromium pre-installed for browser-based tools and auto
 
 ### Pre-bundled Skills
 
-- **SearXNG search** — auto-enabled when `SEARXNG_URL` is set (see [OpenClaw + SearXNG template](https://railway.com/deploy/jOiw-W))
+All skills in `skills/` are bundled into the Docker image and auto-activated for every account on every boot. No manual installation needed.
+
+| Skill | Description |
+|-------|-------------|
+| **searxng-local** | Web search via SearXNG. Set `SEARXNG_URL` to point at your instance (see [OpenClaw + SearXNG template](https://railway.com/deploy/jOiw-W)) |
+| **composio-connect** | Lets the bot generate and send Composio OAuth Connect Links directly in chat. Requires `SETUP_PASSWORD` and `COMPOSIO_API_KEY`. |
+| **polymarket-clob** | Polymarket CLOB API geoblock guardrail. Routes order placement through `POLYMARKET_PROXY_URL` when set; blocks order attempts and informs the user when not set. Read-only market data always works. |
+
+Skills can be enabled/disabled per-account from the **Skills** tab in the dashboard (`/dashboard#tab=skills`).
 
 ### Using Plano as an LLM Gateway
 
@@ -276,7 +284,7 @@ Install skills from two sources:
 | `OPENCLAW_GATEWAY_TOKEN` | Gateway auth token (auto-generated if not set) | Auto-generated | No |
 | `INTERNAL_GATEWAY_PORT` | Internal port for OpenClaw gateway | `18789` | No |
 | `PORT` | External port (Railway overrides this) | `8080` | No |
-| `SEARXNG_URL` | SearXNG instance URL (enables search skill) | — | No |
+| `SEARXNG_URL` | SearXNG instance URL — the `searxng-local` skill is always enabled for all accounts; set this to point it at your SearXNG service | — | No |
 | `COMPOSIO_API_KEY` | Composio API key — enables connector OAuth flows (Google, GitHub, Slack, etc.) | — | No |
 
 ### Railway Volume Setup
@@ -520,6 +528,19 @@ Composio OAuth flows. Requires `COMPOSIO_API_KEY` to be set.
 6. Server marks the `composio_connections` row `active` and redirects to `/dashboard#tab=connectors`
 
 Connection state is persisted in the `composio_connections` Supabase table (see `supabase/migrations/20260318_composio_connections.sql`).
+
+### Skills (Supabase auth required)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/dashboard/api/skills` | List installed skills with name, description, version, and enabled status |
+| POST | `/dashboard/api/skills/:name/toggle` | Enable or disable a skill; pushes config change to the running gateway via RPC |
+
+### Bot Connect Link (setup password required)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/composio/connect-link` | Generate a Composio Connect Link from inside the bot. Body: `{ toolkitKey, origin? }`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
 
 ### Other (password required)
 

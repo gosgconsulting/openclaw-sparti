@@ -12,6 +12,7 @@ This repo is the **OpenClaw Railway wrapper** (package: `openclaw-railway-wrappe
 - Exposes **health**, **login**, **onboard** (setup wizard), **lite** (management dashboard), and **dashboard** (SaaS-style UI).
 - **Auth**: Supabase (primary) for `/auth`, `/dashboard`, `/dashboard/*`; optional setup-password for `/onboard`, `/lite`.
 - **Multi-tenancy (current)**: One OpenClaw runtime per deployment (single state dir, single gateway). All authenticated users share the same `/lite` and config. Per-user `instances` row in DB is metadata only. See `docs/PLAN.md` for a plan to add one child OpenClaw per user.
+- **Mission Control**: Centralized ops surface at `/mission-control` (default index). Boards, tasks, approval queue, structured audit trail, and gateway overview. Requires Supabase auth. Data stored in `boards`, `tasks`, `approval_requests`, `audit_events` tables.
 - **Integrations**: Supabase (auth + optional `app_settings` for LLM config), Composio (external tools).
 - **SaaS bootstrap**: Can create `openclaw.json` from env (`LLM_GATEWAY_*`) or from Supabase `app_settings.key = 'llm_gateway'`.
 - Proxies other traffic to the OpenClaw gateway; manages gateway process (start/stop/restart, logs, upgrades, backup/restore).
@@ -22,14 +23,15 @@ This repo is the **OpenClaw Railway wrapper** (package: `openclaw-railway-wrappe
 
 ```
 Request → Express 5 (server.js)
-            ├── /health/*     → health.js (no auth)
-            ├── /login        → auth flow
-            ├── /auth         → Supabase login page
-            ├── /dashboard/*  → requireUser() → dashboard UI + API
-            ├── /onboard/*    → setup wizard (password or Supabase)
-            ├── /lite/*       → lite panel (password)
-            ├── /openclaw/*   → proxy to gateway (token in URL/fragment)
-            └── /*            → proxy to OpenClaw gateway
+            ├── /health/*            → health.js (no auth)
+            ├── /                    → requireUser() → redirect /mission-control (or /auth if not logged in)
+            ├── /auth                → Supabase login page
+            ├── /mission-control/*   → requireUser() → Mission Control UI + API
+            ├── /dashboard/*         → requireUser() → dashboard UI + API
+            ├── /onboard/*           → setup wizard (password or Supabase)
+            ├── /lite/*              → lite panel (password)
+            ├── /openclaw/*          → proxy to gateway (token in URL/fragment)
+            └── /*                   → proxy to OpenClaw gateway
 ```
 
 - **Gateway**: Child process (or adopted daemon); state in `OPENCLAW_STATE_DIR` (default `/data/.openclaw`).
@@ -58,7 +60,10 @@ Request → Express 5 (server.js)
 | `src/schema/migrate.js` | Legacy config migration. |
 | `src/schema/form-meta.js` | UI metadata for config editor. |
 | `src/schema/sections/*.json` | JSON Schema sections (agents, auth, channels, etc.). |
-| `src/*-page.js` | HTML generators: onboard, ui (lite), auth, dashboard, console. |
+| `src/mission-control-page.js` | HTML generator for Mission Control (6-section ops dashboard). |
+| `src/routes/mission-control.js` | Express router for `/mission-control/*` (boards, tasks, approvals, audit, gateway overview). |
+| `src/audit.js` | Non-blocking `emitAudit()` helper — writes structured rows to `audit_events` Supabase table. |
+| `src/*-page.js` | HTML generators: onboard, ui (lite), auth, dashboard. |
 | `test/*.test.js` | Unit and E2E tests (channels, config-builder, deploy-flow). |
 
 ---

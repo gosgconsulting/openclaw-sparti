@@ -19,6 +19,22 @@ Chronological log of notable changes: what changed, why, risk, and rollback.
 
 ## Entries
 
+### 2026-03-18 — Mission Control implemented
+
+- **Change:**
+  - Added `src/audit.js` — `emitAudit(supabase, opts)` non-blocking helper; writes to `audit_events` table.
+  - Added `src/mission-control-page.js` — HTML generator for Mission Control (6 sections: overview, boards, tasks, approvals, audit trail, gateway). Vanilla JS + fetch, same pattern as `dashboard-page.js`.
+  - Added `src/routes/mission-control.js` — Express router mounted at `/mission-control`. 14 endpoints (boards CRUD, tasks CRUD, approvals, audit query, gateway overview). All behind `requireUser()`. Emits `audit_events` rows on all write actions.
+  - Added `supabase/migrations/20260318_mission_control.sql` — 4 tables: `boards`, `tasks`, `approval_requests`, `audit_events`. All with RLS scoped to `auth.uid()`. `audit_events` is append-only (no UPDATE/DELETE policies).
+  - Wired `GET /` in `server.js` — redirects authenticated users to `/mission-control`; unauthenticated users are sent to `/auth` by `requireUser()`.
+  - Mounted `missionControlRouter` in `server.js` at `/mission-control`.
+  - Added "⚡ Mission Control" link to `dashboard-page.js` actions bar.
+- **Reason:** Implement the Mission Control plan from `docs/PLAN.md`. Makes `/` the default entry point for authenticated users instead of a gateway proxy fallthrough.
+- **Risk:** Low. All new files; no existing routes changed. `GET /` is a new route (previously fell through to the gateway proxy). Tests: 66/66 pass.
+- **Rollback:** Remove `import missionControlRouter` and the `GET /` + `app.use('/mission-control', ...)` lines from `server.js`. Remove the three new `src/` files. Revert `dashboard-page.js` action bar change. Do not apply the SQL migration.
+
+---
+
 ### 2026-03-18 — Mission Control plan documented
 
 - **Change:** Added Mission Control plan to `docs/PLAN.md` (findings, duplicate risks, 6-phase execution plan, reuse targets, definition of done). Updated `TODO.md` with phase-by-phase next steps. No code changes.

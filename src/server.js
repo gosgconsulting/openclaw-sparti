@@ -33,6 +33,7 @@ import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
 import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies } from './auth-supabase.js';
+import missionControlRouter from './routes/mission-control.js';
 import {
   listComposioApps,
   generateConnectLink,
@@ -552,6 +553,15 @@ app.use((req, res, next) => {
 // Health check endpoints - no authentication required
 app.use('/health', healthRouter);
 
+// Root: redirect to Mission Control (authenticated) or /auth (unauthenticated).
+// requireUser() handles the redirect to /auth automatically when not logged in.
+app.get('/', requireUser(), (req, res) => {
+  res.redirect('/mission-control');
+});
+
+// Mission Control
+app.use('/mission-control', missionControlRouter);
+
 // --- Supabase auth + dashboard ---
 app.get('/auth', (req, res) => {
   const redirect = req.query.redirect || '/dashboard';
@@ -1030,6 +1040,133 @@ app.post('/dashboard/connectors/:key/disconnect', requireUser(), async (req, res
   } catch (err) {
     console.error('[connectors/disconnect] error:', err.message);
     return res.status(500).json({ error: err.message || 'Failed to disconnect' });
+  }
+});
+
+// ── Skills API ────────────────────────────────────────────────────────────────
+// GET  /dashboard/api/skills        — list installed skills with enabled status
+// POST /dashboard/api/skills/:name/toggle — enable or disable a skill
+
+app.get('/dashboard/api/skills', requireUser(), async (req, res) => {
+  const skillsDir = join(OPENCLAW_STATE_DIR, 'skills');
+  const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+
+  let enabledMap = {};
+  try {
+    const cfg = JSON.parse(readFileSync(configFile, 'utf-8'));
+    enabledMap = cfg?.skills?.entries || {};
+  } catch { /* config may not exist yet */ }
+
+  const skills = [];
+  if (existsSync(skillsDir)) {
+    for (const name of readdirSync(skillsDir)) {
+      const skillPath = join(skillsDir, name);
+      try {
+        if (!lstatSync(skillPath).isDirectory()) continue;
+        const skillMdPath = join(skillPath, 'SKILL.md');
+        if (!existsSync(skillMdPath)) continue;
+
+        let description = '';
+        let version = '';
+        const md = readFileSync(skillMdPath, 'utf-8');
+        const descMatch = md.match(/^description:\s*(.+)$/m);
+        const verMatch = md.match(/^version:\s*(.+)$/m);
+        if (descMatch) description = descMatch[1].trim();
+        if (verMatch) version = verMatch[1].trim();
+
+        const metaPath = join(skillPath, '_meta.json');
+        if (existsSync(metaPath)) {
+          try {
+            const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+            if (!version && meta.version) version = String(meta.version);
+          } catch { /* ignore */ }
+        }
+
+        const enabled = enabledMap[name]?.enabled === true;
+        skills.push({ name, description, version, enabled });
+      } catch { /* skip unreadable entries */ }
+    }
+  }
+
+  skills.sort((a, b) => a.name.localeCompare(b.name));
+  return res.json({ skills });
+});
+
+app.post('/dashboard/api/skills/:name/toggle', requireUser(), async (req, res) => {
+  const skillName = req.params.name;
+  if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) {
+    return res.status(400).json({ error: 'Invalid skill name' });
+  }
+
+  const skillsDir = join(OPENCLAW_STATE_DIR, 'skills');
+  const skillPath = join(skillsDir, skillName);
+  if (!existsSync(join(skillPath, 'SKILL.md'))) {
+    return res.status(404).json({ error: 'Skill not found' });
+  }
+
+  const configFile = join(OPENCLAW_STATE_DIR, 'openclaw.json');
+  let config = {};
+  try {
+    config = JSON.parse(readFileSync(configFile, 'utf-8'));
+  } catch { /* start fresh */ }
+
+  config.skills = config.skills || {};
+  config.skills.entries = config.skills.entries || {};
+  const current = config.skills.entries[skillName]?.enabled === true;
+  const next = !current;
+  config.skills.entries[skillName] = { enabled: next };
+
+  try {
+    writeFileSync(configFile, JSON.stringify(config, null, 2));
+    try {
+      await gatewayRPC('config.set', { raw: JSON.stringify(config) });
+    } catch (rpcErr) {
+      console.warn(`[skills/toggle] config.set RPC failed: ${rpcErr.message}`);
+    }
+    return res.json({ name: skillName, enabled: next });
+  } catch (err) {
+    console.error('[skills/toggle] error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to toggle skill' });
+  }
+});
+
+// ── Bot-accessible connect-link endpoint ──────────────────────────────────────
+// Called by the composio-connect skill running inside the OpenClaw gateway.
+// Protected by SETUP_PASSWORD (Bearer token) — no Supabase user session needed.
+// The bot passes the toolkit key and the public app origin; the server generates
+// a short-lived Composio Connect Link and returns it so the bot can send it to
+// the user in chat.
+//
+// POST /api/composio/connect-link
+// Body: { toolkitKey: string, origin?: string }
+// Response: { redirectUrl: string }
+app.post('/api/composio/connect-link', async (req, res) => {
+  const pw = (process.env.SETUP_PASSWORD || '').toString();
+  if (!pw || !hasValidSetupPassword(req, res, pw)) {
+    return res.status(401).json({ error: 'Authentication required. Send SETUP_PASSWORD as Bearer token.' });
+  }
+
+  const toolkitKey = typeof req.body?.toolkitKey === 'string' ? req.body.toolkitKey.trim() : '';
+  if (!toolkitKey) {
+    return res.status(400).json({ error: 'toolkitKey is required' });
+  }
+
+  const composioApiKey = await getComposioApiKey();
+  if (!composioApiKey) {
+    return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY.' });
+  }
+
+  try {
+    // Use a stable bot user ID so connections accumulate under one Composio session.
+    const botUserId = 'bot-shared';
+    const origin = typeof req.body?.origin === 'string' && req.body.origin.trim()
+      ? req.body.origin.trim()
+      : getRequestOrigin(req);
+    const { redirectUrl } = await generateConnectLink(botUserId, toolkitKey, origin, composioApiKey);
+    return res.json({ redirectUrl });
+  } catch (err) {
+    console.error('[api/composio/connect-link] error:', err.message);
+    return res.status(502).json({ error: err.message || 'Failed to generate connect link' });
   }
 });
 
