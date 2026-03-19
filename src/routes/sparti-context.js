@@ -25,37 +25,12 @@
 
 import { Router } from 'express';
 import { requireUserOrBot } from '../auth-supabase.js';
-import { createSupabaseClient, createSupabaseAdminClient } from '../supabase.js';
+import { getClientForRequest, scopeToUser } from '../lib/db.js';
 import { emitAudit } from '../audit.js';
 
 const router = Router();
 
 router.use(requireUserOrBot());
-
-/**
- * Returns a Supabase client scoped to the current request.
- * - Browser sessions: RLS-scoped user client (access token from cookie)
- * - Bot sessions (SETUP_PASSWORD + x-user-id): service-role admin client
- *   so queries bypass RLS but are still filtered by user_id where needed.
- */
-function getSupabaseForRequest(req) {
-  if (req.isBotAuth) {
-    return createSupabaseAdminClient();
-  }
-  return createSupabaseClient({ accessToken: req.supabaseAccessToken });
-}
-
-/**
- * When the bot uses the admin client (no RLS), we must manually filter by
- * user_id to prevent cross-user data leakage.
- * Returns the query unchanged for browser sessions (RLS handles it).
- */
-function scopeToUser(query, req) {
-  if (req.isBotAuth) {
-    return query.eq('user_id', req.user.id);
-  }
-  return query;
-}
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -104,7 +79,7 @@ async function callEdgeFunction(slug, body, userAccessToken) {
 // ── Brands ────────────────────────────────────────────────────────────────────
 
 router.get('/brands', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { data, error } = await scopeToUser(
     supabase
       .from('brands')
@@ -117,7 +92,7 @@ router.get('/brands', async (req, res) => {
 });
 
 router.get('/brands/:id', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { data, error } = await scopeToUser(
     supabase
       .from('brands')
@@ -137,7 +112,7 @@ router.get('/brands/:id', async (req, res) => {
  * Both tables are RLS-scoped to the authenticated user.
  */
 router.get('/agents', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
 
   const [aiResult, customResult] = await Promise.all([
     scopeToUser(
@@ -166,7 +141,7 @@ router.get('/agents', async (req, res) => {
 });
 
 router.get('/agents/:id', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
 
   // Try ai_agents first, then custom_agents
   const { data: aiAgent } = await scopeToUser(
@@ -195,7 +170,7 @@ router.get('/agents/:id', async (req, res) => {
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 router.get('/projects', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { data, error } = await scopeToUser(
     supabase
       .from('projects')
@@ -208,7 +183,7 @@ router.get('/projects', async (req, res) => {
 });
 
 router.get('/projects/:id', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { data, error } = await scopeToUser(
     supabase
       .from('projects')
@@ -228,7 +203,7 @@ router.get('/projects/:id', async (req, res) => {
  * copilot_templates (available templates), and app_tools (platform tools).
  */
 router.get('/copilot-tools', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
 
   const [instancesResult, templatesResult, appToolsResult] = await Promise.all([
     scopeToUser(
@@ -258,7 +233,7 @@ router.get('/copilot-tools', async (req, res) => {
 });
 
 router.get('/copilot-tools/instances/:id', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { data, error } = await scopeToUser(
     supabase
       .from('copilot_instances')
@@ -331,7 +306,7 @@ router.get('/edge-functions', (req, res) => {
  * Returns: { session_id?, reply, agent }
  */
 router.post('/agents/:id/launch', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { message, brand_id, project_id, model } = req.body || {};
 
   // Load agent
@@ -422,7 +397,7 @@ router.post('/agents/:id/launch', async (req, res) => {
  * Returns: { reply, agent }
  */
 router.post('/agents/:id/chat', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   const { message, history, brand_id, project_id, model } = req.body || {};
   if (!message || !String(message).trim()) {
     return res.status(400).json({ error: 'message is required' });
@@ -519,7 +494,7 @@ router.post('/edge/:slug', async (req, res) => {
     return res.status(400).json({ error: 'Invalid edge function slug' });
   }
 
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
   try {
     const result = await callEdgeFunction(slug, req.body || {}, req.supabaseAccessToken);
     emitAudit(supabase, {
@@ -548,7 +523,7 @@ router.post('/edge/:slug', async (req, res) => {
  * Useful for the bot to give a quick overview.
  */
 router.get('/summary', async (req, res) => {
-  const supabase = getSupabaseForRequest(req);
+  const supabase = getClientForRequest(req);
 
   const [brands, aiAgents, customAgents, projects, copilotInstances, appTools] = await Promise.all([
     scopeToUser(supabase.from('brands').select('id', { count: 'exact', head: true }), req),

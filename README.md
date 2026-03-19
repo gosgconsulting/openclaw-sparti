@@ -480,13 +480,29 @@ openclaw-railway/
     └── bin/                    # In-app upgraded openclaw binary
 ```
 
+### Supabase Data Access Layer
+
+All Supabase access is centralised in **`src/lib/db.js`** — no raw `createClient` calls in route handlers.
+
+| Export | Purpose |
+|--------|---------|
+| `getAdminClient()` | Lazy singleton service-role client. Returns `null` when `SUPABASE_SERVICE_ROLE_KEY` is missing. |
+| `getUserClient(req)` | RLS-scoped user client from the current request's access token. |
+| `getClientForRequest(req)` | Dual-mode: user client for browser sessions, admin client for bot (`SETUP_PASSWORD`) sessions. |
+| `scopeToUser(query, req)` | Adds `.eq('user_id', …)` filter when the admin client is used (no RLS). |
+| `getAppSetting(key)` | Reads from `app_settings` with a 10-minute in-process TTL cache. |
+| `getLlmGatewayConfig()` | Env vars first, then `app_settings['llm_gateway']`. |
+| `resolveComposioApiKey()` | `COMPOSIO_API_KEY` env first, then `app_settings['composio'].api_key`. |
+
+`src/supabase.js` contains the two low-level factories (`createSupabaseClient`, `createSupabaseAdminClient`). Both return `null` instead of throwing when required env vars are absent, so callers degrade gracefully.
+
 ### Supabase Persistence Model
 
 The app also persists user and instance state in Supabase (RLS enabled):
 
 - **Per-user instance registry** — `instances` (one row per user in SaaS mode, plus bot connectivity fields such as `gateway_url`, `supabase_url`, `bot_connected_at`, `bot_version`)
 - **Global server settings** — `app_settings` (`llm_gateway`, `composio`) read server-side via service role
-- **Mission Control** — `mc_boards`, `mc_tasks`, `mc_approval_requests`, `mc_audit_events`, `mc_board_groups`, `mc_tags`, `mc_agents`, `mc_prompts`
+- **Mission Control** — `mc_tasks`, `mc_approval_requests`, `mc_audit_events`, `mc_board_groups`, `mc_tags`, `mc_agents`, `mc_prompts` (boards backed by the unified `projects` table — see migration `20260320_unify_tasks_projects.sql`)
 - **Composio connections** — `composio_connections` (OAuth/account linkage)
 - **Bot session ledger** — `bot_sessions` (cross-platform thread/session tracking per user + instance)
 - **Bot token usage** — `global_ai_token_usage` (shared with main Sparti SaaS; bot writes rows with `provider='openclaw'` and `metadata.source='openclaw'`; `/lite/api/usage` reads from it as a fallback when gateway RPC is unavailable)
@@ -590,7 +606,7 @@ Connection state is persisted in the `composio_connections` Supabase table (migr
 |--------|------|-------------|
 | POST | `/api/composio/connect-link` | Generate a Composio OAuth Connect Link from inside the bot. Body: `{ toolkitKey, userId?, returnTo?, origin? }`. Pass a real Supabase `userId` for per-user linking (falls back to `bot-shared`); `returnTo` defaults to `/mission-control#integrations`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
 | POST | `/api/composio/connect-api-key` | Connect a service using an API key, Bearer token, or Basic auth — no OAuth redirect needed. Body: `{ toolkitKey, credentials: { api_key?, token?, username?, password? }, authScheme? }`. Returns `{ ok: true, connectedAccountId }`. Connection is immediately active. Protected by `SETUP_PASSWORD` Bearer token. Users can paste the key in chat (e.g. "connect productive.io with api: xyz"); the bot calls this endpoint and confirms without echoing the key. |
-| POST | `/api/usage` | Push a per-request token usage record into `global_ai_token_usage`. Body: `{ model, provider?, request_id?, input_tokens, output_tokens, total_tokens?, estimated_cost_usd?, source?, session_id?, instance_id? }`. `user_id` resolved from `x-user-id` header → `SPARTI_USER_ID` env var → null. Rows are stored with `provider='openclaw'` and `metadata.source='openclaw'` so they can be filtered separately from Sparti SaaS usage. Protected by `SETUP_PASSWORD` Bearer token. |
+| POST | `/api/usage` | Push a per-request token usage record into `global_ai_token_usage`. Body: `{ model, provider?, request_id?, input_tokens, output_tokens, total_tokens?, estimated_cost_usd?, source?, session_id?, instance_id? }`. `user_id` resolved account-based: `x-user-id` header → `instances` table owner (no env var required). Rows are stored with `provider='openclaw'` and `metadata.source='openclaw'` so they can be filtered separately from Sparti SaaS usage. Protected by `SETUP_PASSWORD` Bearer token. |
 
 ### Sparti Context (Supabase auth required)
 

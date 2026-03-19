@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { requireUser } from '../auth-supabase.js';
-import { createSupabaseClient } from '../supabase.js';
+import { getUserClient } from '../lib/db.js';
 import { getMissionControlPageHTML } from '../mission-control-page.js';
 import { emitAudit } from '../audit.js';
 import { isGatewayRunning, getGatewayInfo, getGatewayUptime, getRecentLogs } from '../gateway.js';
@@ -29,7 +29,7 @@ router.get('/', (req, res) => {
 // ── Overview ──────────────────────────────────────────────────────────────────
 
 router.get('/api/overview', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const userId = req.user.id;
 
   // Gateway status
@@ -92,7 +92,7 @@ router.get('/api/overview', async (req, res) => {
 // Field mapping: name → title, sparti_brand_id → brand_id.
 
 router.get('/api/boards', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('projects')
     .select('id,title,description,status,brand_id,is_active,created_at,updated_at')
@@ -105,7 +105,7 @@ router.get('/api/boards', async (req, res) => {
 });
 
 router.post('/api/boards', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, title, description, brand_id, sparti_brand_id } = req.body || {};
   const resolvedTitle = (title || name || '').trim();
   if (!resolvedTitle) return res.status(400).json({ error: 'name is required' });
@@ -130,7 +130,7 @@ router.post('/api/boards', async (req, res) => {
 });
 
 router.patch('/api/boards/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, title, description, status, brand_id, sparti_brand_id } = req.body || {};
   const updates = {};
   const resolvedTitle = title ?? name;
@@ -158,7 +158,7 @@ router.patch('/api/boards/:id', async (req, res) => {
 });
 
 router.delete('/api/boards/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { error } = await supabase
     .from('projects')
     .delete()
@@ -194,7 +194,7 @@ function normaliseProject(p) {
 // URL shape preserved: /api/boards/:boardId/tasks — boardId IS the project_id.
 
 router.get('/api/boards/:boardId/tasks', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
 
   // Verify the project belongs to the user (replaces old mc_boards ownership check)
   const { data: project } = await supabase
@@ -218,7 +218,7 @@ router.get('/api/boards/:boardId/tasks', async (req, res) => {
 });
 
 router.post('/api/boards/:boardId/tasks', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { title, description, status, column_status, priority, assignee_agent, tags } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'title is required' });
 
@@ -253,7 +253,7 @@ router.post('/api/boards/:boardId/tasks', async (req, res) => {
 });
 
 router.patch('/api/tasks/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { title, description, status, column_status, priority, assignee_agent, tags } = req.body || {};
   const updates = {};
   if (title != null) updates.title = String(title).trim();
@@ -279,7 +279,7 @@ router.patch('/api/tasks/:id', async (req, res) => {
 });
 
 router.delete('/api/tasks/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { error } = await supabase
     .from('mc_tasks')
     .delete()
@@ -294,7 +294,7 @@ router.delete('/api/tasks/:id', async (req, res) => {
 // ── Approvals ─────────────────────────────────────────────────────────────────
 
 router.get('/api/approvals', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('mc_approval_requests')
     .select('id,action_type,payload,status,decided_at,decided_by,created_at')
@@ -306,7 +306,7 @@ router.get('/api/approvals', async (req, res) => {
 });
 
 router.post('/api/approvals', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { action_type, payload } = req.body || {};
   if (!action_type || !String(action_type).trim()) return res.status(400).json({ error: 'action_type is required' });
 
@@ -327,7 +327,7 @@ router.post('/api/approvals', async (req, res) => {
 });
 
 router.post('/api/approvals/:id/decide', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { decision } = req.body || {};
   if (decision !== 'approved' && decision !== 'rejected') {
     return res.status(400).json({ error: 'decision must be "approved" or "rejected"' });
@@ -355,7 +355,7 @@ router.post('/api/approvals/:id/decide', async (req, res) => {
 // ── Audit Trail ───────────────────────────────────────────────────────────────
 
 router.get('/api/audit', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   const eventType = req.query.event_type ? String(req.query.event_type) : null;
@@ -398,7 +398,7 @@ router.get('/api/channels', (req, res) => {
 // ── Board Groups ───────────────────────────────────────────────────────────────
 
 router.get('/api/board-groups', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('mc_board_groups')
     .select('id,name,description,created_at')
@@ -409,7 +409,7 @@ router.get('/api/board-groups', async (req, res) => {
 });
 
 router.post('/api/board-groups', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, description } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   const { data, error } = await supabase
@@ -423,7 +423,7 @@ router.post('/api/board-groups', async (req, res) => {
 });
 
 router.patch('/api/board-groups/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, description } = req.body || {};
   const updates = {};
   if (name != null) updates.name = name.trim();
@@ -441,7 +441,7 @@ router.patch('/api/board-groups/:id', async (req, res) => {
 });
 
 router.delete('/api/board-groups/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { error } = await supabase
     .from('mc_board_groups')
     .delete()
@@ -454,7 +454,7 @@ router.delete('/api/board-groups/:id', async (req, res) => {
 // ── Tags ──────────────────────────────────────────────────────────────────────
 
 router.get('/api/tags', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('mc_tags')
     .select('id,name,slug,color,created_at')
@@ -482,7 +482,7 @@ router.get('/api/tags', async (req, res) => {
 });
 
 router.post('/api/tags', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, color } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -497,7 +497,7 @@ router.post('/api/tags', async (req, res) => {
 });
 
 router.patch('/api/tags/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, color } = req.body || {};
   const updates = {};
   if (name != null) { updates.name = name.trim(); updates.slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''); }
@@ -515,7 +515,7 @@ router.patch('/api/tags/:id', async (req, res) => {
 });
 
 router.delete('/api/tags/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { error } = await supabase
     .from('mc_tags')
     .delete()
@@ -528,7 +528,7 @@ router.delete('/api/tags/:id', async (req, res) => {
 // ── Agents ────────────────────────────────────────────────────────────────────
 
 router.get('/api/agents', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('mc_agents')
     .select('id,name,role,board_id,status,last_seen_at,metadata,sparti_agent_id,sparti_agent_source,created_at')
@@ -564,7 +564,7 @@ router.get('/api/agents', async (req, res) => {
 });
 
 router.post('/api/agents', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, role, board_id, metadata, sparti_agent_id, sparti_agent_source } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   const { data, error } = await supabase
@@ -587,7 +587,7 @@ router.post('/api/agents', async (req, res) => {
 });
 
 router.patch('/api/agents/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, role, board_id, status, metadata, sparti_agent_id, sparti_agent_source } = req.body || {};
   const updates = {};
   if (name != null) updates.name = name.trim();
@@ -610,7 +610,7 @@ router.patch('/api/agents/:id', async (req, res) => {
 });
 
 router.delete('/api/agents/:id', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { error } = await supabase
     .from('mc_agents')
     .delete()
@@ -623,7 +623,7 @@ router.delete('/api/agents/:id', async (req, res) => {
 // ── Prompts (/shortcode saved workflows) ──────────────────────────────────────
 
 router.get('/api/prompts', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('mc_prompts')
     .select('id,name,slug,description,type,payload,is_active,usage_count,last_used_at,created_at')
@@ -634,7 +634,7 @@ router.get('/api/prompts', async (req, res) => {
 });
 
 router.get('/api/prompts/:slug', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('mc_prompts')
     .select('id,name,slug,description,type,payload,is_active,usage_count,last_used_at,created_at,updated_at')
@@ -647,7 +647,7 @@ router.get('/api/prompts/:slug', async (req, res) => {
 });
 
 router.post('/api/prompts', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, slug, description, type, payload } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   if (!slug?.trim()) return res.status(400).json({ error: 'slug is required' });
@@ -681,7 +681,7 @@ router.post('/api/prompts', async (req, res) => {
 });
 
 router.patch('/api/prompts/:slug', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { name, description, type, payload, is_active } = req.body || {};
   const updates = {};
   if (name != null) updates.name = String(name).trim();
@@ -705,7 +705,7 @@ router.patch('/api/prompts/:slug', async (req, res) => {
 });
 
 router.delete('/api/prompts/:slug', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { error } = await supabase
     .from('mc_prompts')
     .delete()
@@ -728,7 +728,7 @@ router.delete('/api/prompts/:slug', async (req, res) => {
  * Body: optional overrides merged into payload (e.g. { message, brand_id })
  */
 router.post('/api/prompts/:slug/run', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
 
   const { data: prompt, error } = await supabase
     .from('mc_prompts')
@@ -808,7 +808,7 @@ function buildDispatchInstructions(type, payload) {
 // ── Live Feed (recent audit events as activity stream) ────────────────────────
 
 router.get('/api/live-feed', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
   const { data, error } = await supabase
     .from('mc_audit_events')
@@ -823,7 +823,7 @@ router.get('/api/live-feed', async (req, res) => {
 // ── History (bot sessions / chat history across all brands) ──────────────────
 
 router.get('/api/history', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   const brandId = req.query.brand_id ? String(req.query.brand_id) : null;
@@ -845,7 +845,7 @@ router.get('/api/history', async (req, res) => {
 // ── Brands (list from Sparti brands table) ───────────────────────────────────
 
 router.get('/api/brands', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const { data, error } = await supabase
     .from('brands')
     .select('id,name,description,logo_url,website,industry,created_at,is_active')
@@ -858,7 +858,7 @@ router.get('/api/brands', async (req, res) => {
 // ── Logs (token usage history from global_ai_token_usage) ────────────────────
 
 router.get('/api/logs', async (req, res) => {
-  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const supabase = getUserClient(req);
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   const days = Math.min(parseInt(req.query.days, 10) || 30, 90);

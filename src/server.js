@@ -32,7 +32,8 @@ import { getSetupPageHTML } from './onboard-page.js';
 import { getUIPageHTML } from './ui-page.js';
 import { getAuthPageHTML } from './auth-page.js';
 import { getDashboardPageHTML } from './dashboard-page.js';
-import { createSupabaseClient, createSupabaseAdminClient } from './supabase.js';
+import { createSupabaseClient } from './supabase.js';
+import { getAdminClient, getLlmGatewayConfig, resolveComposioApiKey, resolveInstanceOwner } from './lib/db.js';
 import { requireUser, setSupabaseAuthCookies, clearSupabaseAuthCookies, getSupabaseTokensFromRequest, OC_RETURN_COOKIE } from './auth-supabase.js';
 import missionControlRouter from './routes/mission-control.js';
 import spartiContextRouter from './routes/sparti-context.js';
@@ -64,66 +65,19 @@ function parseOptionalInt(value, fallback) {
 
 /**
  * SaaS mode bootstrap: create openclaw.json from LLM Gateway env vars if missing.
- * This avoids the interactive /onboard wizard for end-users.
+ * Delegates to the centralised DAL (src/lib/db.js).
  */
 async function getSharedLlmGatewayConfigFromSupabase() {
-  // Optional fallback. Only works if you provide SUPABASE_SERVICE_ROLE_KEY
-  // and you have a table to store global settings.
-  try {
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
-    const admin = createSupabaseAdminClient();
-
-    // Expected schema (recommended):
-    // public.app_settings(key text primary key, value jsonb not null)
-    // Row: key='llm_gateway', value={ base_url, api_key, model_id, provider_id?, context_window?, max_tokens? }
-    const { data, error } = await admin
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'llm_gateway')
-      .maybeSingle();
-
-    if (error || !data?.value) return null;
-    const v = data.value;
-    if (!v || typeof v !== 'object') return null;
-
-    return {
-      baseUrl: String(v.base_url || v.baseUrl || '').trim(),
-      apiKey: String(v.api_key || v.apiKey || '').trim(),
-      modelId: String(v.model_id || v.modelId || '').trim(),
-      providerId: String(v.provider_id || v.providerId || '').trim(),
-      contextWindow: v.context_window ?? v.contextWindow,
-      maxTokens: v.max_tokens ?? v.maxTokens,
-    };
-  } catch {
-    return null;
-  }
+  return getLlmGatewayConfig();
 }
 
 /**
  * Resolve the shared Composio API key.
- * Priority: COMPOSIO_API_KEY env var → app_settings(key='composio').api_key in Supabase.
- * One key is shared across all users on this server; individual user OAuth sessions
- * are scoped by user_id passed to composio.create(userId).
+ * Priority: COMPOSIO_API_KEY env var → app_settings(key='composio').api_key.
+ * Delegates to the centralised DAL (src/lib/db.js).
  */
 async function getComposioApiKey() {
-  const fromEnv = getOptionalEnv('COMPOSIO_API_KEY');
-  if (fromEnv) return fromEnv;
-
-  try {
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return '';
-    const admin = createSupabaseAdminClient();
-    // Expected row: app_settings(key='composio', value={"api_key":"..."})
-    const { data, error } = await admin
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'composio')
-      .maybeSingle();
-    if (error || !data?.value) return '';
-    const key = String(data.value?.api_key || data.value?.apiKey || '').trim();
-    return key;
-  } catch {
-    return '';
-  }
+  return resolveComposioApiKey();
 }
 
 async function ensureOpenClawConfigFromEnv() {
@@ -575,7 +529,7 @@ app.post('/api/mc/events', express.json(), async (req, res) => {
     return res.status(400).json({ error: 'event_type and user_id are required' });
   }
 
-  const adminSb = createSupabaseAdminClient();
+  const adminSb = getAdminClient();
   if (!adminSb) {
     return res.status(503).json({ error: 'Supabase admin client not available — check SUPABASE_SERVICE_ROLE_KEY' });
   }
@@ -594,7 +548,7 @@ app.post('/api/mc/events', express.json(), async (req, res) => {
 // Protected by SETUP_PASSWORD Bearer token.
 // Body: { model, provider?, request_id?, input_tokens, output_tokens, total_tokens?,
 //         estimated_cost_usd?, source?, session_id?, instance_id? }
-// user_id resolved from: x-user-id header → SPARTI_USER_ID env var → null (stored without user scope).
+// user_id resolved account-based: x-user-id header → instances table owner (no env var).
 app.post('/api/usage', express.json(), async (req, res) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -622,12 +576,14 @@ app.post('/api/usage', express.json(), async (req, res) => {
 
   if (!model) return res.status(400).json({ error: 'model is required' });
 
+  // Resolve the account: x-user-id header first, then look up from the instances table.
+  // In SaaS mode there is exactly one instance per account — no env var needed.
   const userId =
     (req.headers['x-user-id'] || '').toString().trim() ||
-    getOptionalEnv('SPARTI_USER_ID') ||
+    (await resolveInstanceOwner()) ||
     null;
 
-  const adminSb = createSupabaseAdminClient();
+  const adminSb = getAdminClient();
   const { error } = await adminSb.from('global_ai_token_usage').insert({
     provider: String(provider || 'openclaw'),
     model: String(model),
@@ -1381,7 +1337,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
   }
 
   try {
-    const supabase = createSupabaseAdminClient();
+    const supabase = getAdminClient();
     const { error: dbErr } = await supabase
       .from('composio_connections')
       .upsert(
@@ -1714,7 +1670,7 @@ app.post('/api/composio/connect-link', async (req, res) => {
     // Non-fatal: if the insert fails (e.g. row already exists), we still return the link.
     try {
       const adminSb = process.env.SUPABASE_SERVICE_ROLE_KEY
-        ? createSupabaseAdminClient()
+        ? getAdminClient()
         : createSupabaseClient();
       await adminSb.from('composio_connections').insert(
         { user_id: userId, toolkit_key: toolkitKey, connection_request_id: connectionRequestId, connected_account_id: null, status: 'initiated' }
@@ -2316,7 +2272,7 @@ app.post('/lite/api/gateway/start', wrapperAuth, async (req, res) => {
   // Emit to Mission Control audit trail — best-effort, non-blocking, after response sent.
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
-      const adminSb = createSupabaseAdminClient();
+      const adminSb = getAdminClient();
       const userId = req.user?.id || req.headers['x-user-id'] || null;
       if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.started', actor: req.user?.email || 'operator', payload: {} });
     } catch { /* non-fatal */ }
@@ -2333,7 +2289,7 @@ app.post('/lite/api/gateway/stop', wrapperAuth, async (req, res) => {
   }
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
-      const adminSb = createSupabaseAdminClient();
+      const adminSb = getAdminClient();
       const userId = req.user?.id || req.headers['x-user-id'] || null;
       if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.stopped', actor: req.user?.email || 'operator', payload: {} });
     } catch { /* non-fatal */ }
@@ -2353,7 +2309,7 @@ app.post('/lite/api/gateway/restart', wrapperAuth, async (req, res) => {
   }
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
-      const adminSb = createSupabaseAdminClient();
+      const adminSb = getAdminClient();
       const userId = req.user?.id || req.headers['x-user-id'] || null;
       if (userId) emitAudit(adminSb, { userId, eventType: 'gateway.restarted', actor: req.user?.email || 'operator', payload: {} });
     } catch { /* non-fatal */ }
@@ -2511,13 +2467,13 @@ app.get('/lite/api/usage', wrapperAuth, async (req, res) => {
   }
 
   // Supabase fallback: read from global_ai_token_usage when gateway and CLI are unavailable.
-  // Aggregates all rows for this user in the last 7 days, grouped by calendar date.
-  // user_id resolved from SPARTI_USER_ID env var (set in Railway vars) or req.user if present.
+  // Aggregates all rows for this account in the last 7 days, grouped by calendar date.
+  // user_id resolved account-based: session user → instances table owner (no env var).
   if (!rawDays) {
-    const userId = getOptionalEnv('SPARTI_USER_ID') || req.user?.id || null;
+    const userId = req.user?.id || (await resolveInstanceOwner()) || null;
     if (userId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
       try {
-        const adminSb = createSupabaseAdminClient();
+        const adminSb = getAdminClient();
         const startTs = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
         const { data } = await adminSb
           .from('global_ai_token_usage')
