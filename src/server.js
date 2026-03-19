@@ -1314,11 +1314,14 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
   }
 
+  // Service-role is required: callback has no user session (Composio redirect); RLS would block insert.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('[connectors/callback] SUPABASE_SERVICE_ROLE_KEY not set — cannot persist connection (RLS would block). Set it so the callback can upsert composio_connections.');
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
+  }
+
   try {
-    // Use service-role client since we may not have a user access token here.
-    const supabase = process.env.SUPABASE_SERVICE_ROLE_KEY
-      ? createSupabaseAdminClient()
-      : createSupabaseClient();
+    const supabase = createSupabaseAdminClient();
     // Insert or update by (user_id, toolkit_key, connected_account_id) to support multiple accounts per toolkit.
     const { error: dbErr } = await supabase
       .from('composio_connections')

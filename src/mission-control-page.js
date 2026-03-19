@@ -2398,8 +2398,9 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       const h = location.hash;
       if (/connect=success/.test(h)) {
         history.replaceState(null, '', location.hash.replace(/&?connect=success/, ''));
-        // Auto-open the integrations panel on the connectors tab and reload.
+        // Auto-open the integrations panel on the connectors tab and force reload so linked state appears.
         setPanel('integrations');
+        intConnectorsLoaded = false;
         setIntegrationTab('connectors');
         const f = document.createElement('div');
         f.textContent = '✓ Connector linked successfully.';

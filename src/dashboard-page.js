@@ -535,7 +535,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     const m = location.hash.match(/tab=([a-z]+)/);
     if (m && (m[1] === 'connectors' || m[1] === 'channels')) setTab(m[1]);
 
-    // Show flash after Composio OAuth callback redirect.
+    // Show flash after Composio OAuth callback redirect; force reload connectors so linked state appears.
     if (/connect=success/.test(location.hash)) {
       const f = document.createElement('div');
       f.id = 'connect-flash';
@@ -544,6 +544,9 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       document.body.appendChild(f);
       setTimeout(() => { f.style.opacity = '0'; f.style.transition = 'opacity 0.5s'; setTimeout(() => f.remove(), 500); }, 5000);
       history.replaceState(null, '', location.hash.replace(/&?connect=success/, ''));
+      const list = document.getElementById('connectors-list');
+      if (list) list.dataset.loaded = '';
+      loadConnectors();
     } else if (/connect=failed/.test(location.hash)) {
       const err = document.getElementById('connectors-error');
       if (err) { err.textContent = 'OAuth connection failed or was cancelled. Please try again.'; err.style.display = 'block'; }
