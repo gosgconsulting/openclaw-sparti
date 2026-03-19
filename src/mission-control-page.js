@@ -1,3 +1,5 @@
+import { focusVisibleStyles } from './design-tokens.js';
+
 function escapeHtml(s) {
   return String(s ?? '')
     .replaceAll('&', '&amp;')
@@ -20,6 +22,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Light theme; same token names as dark (design-tokens.js) for future theme switch */
     :root {
       --bg: #f8f9fa;
       --surface: #ffffff;
@@ -28,6 +31,8 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       --border2: #dee2e6;
       --accent: #1971c2;
       --accent-light: #e7f5ff;
+      --teal-bright: #1971c2;
+      --radius-md: 8px;
       --text: #212529;
       --text2: #495057;
       --muted: #868e96;
@@ -46,6 +51,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       --sidebar-w: 220px;
       --topbar-h: 52px;
     }
+    ${focusVisibleStyles}
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
@@ -2403,6 +2409,8 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         intConnectorsLoaded = false;
         setIntegrationTab('connectors');
         const f = document.createElement('div');
+        f.setAttribute('aria-live', 'polite');
+        f.setAttribute('role', 'status');
         f.textContent = '✓ Connector linked successfully.';
         f.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#0d3d2e;color:#00e5cc;border:1px solid #00e5cc44;border-radius:8px;padding:12px 20px;font-size:13px;z-index:9999;';
         document.body.appendChild(f);

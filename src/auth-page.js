@@ -1,3 +1,5 @@
+import { getDarkThemeBlock } from './design-tokens.js';
+
 function escapeHtml(s) {
   return String(s)
     .replaceAll('&', '&amp;')
@@ -22,6 +24,7 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
   <title>OpenClaw - Sign in</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"/>
   <style>
+    ${getDarkThemeBlock({ focusVisible: true })}
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -30,45 +33,45 @@ export function getAuthPageHTML({ redirect, error, mode } = {}) {
       place-items: center;
       background: radial-gradient(1200px 800px at 30% 20%, rgba(255,92,92,0.18), transparent 55%),
                   radial-gradient(900px 600px at 70% 80%, rgba(0,229,204,0.12), transparent 55%),
-                  #0f1117;
-      color: #e4e4e7;
-      font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                  var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
       letter-spacing: -0.02em;
     }
     .card {
       width: min(420px, calc(100vw - 32px));
-      background: rgba(24,27,34,0.9);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
       padding: 28px;
       box-shadow: 0 30px 80px rgba(0,0,0,0.5);
       backdrop-filter: blur(8px);
     }
-    h1 { margin: 0 0 6px 0; font-size: 22px; font-weight: 700; color: #fafafa; }
-    p { margin: 0 0 18px 0; color: #a1a1aa; }
+    h1 { margin: 0 0 6px 0; font-size: 22px; font-weight: 700; color: var(--text-strong); }
+    p { margin: 0 0 18px 0; color: var(--muted); }
     .error {
       margin: 0 0 14px 0;
       padding: 10px 12px;
-      border-radius: 10px;
+      border-radius: var(--radius-md);
       border: 1px solid rgba(255,92,92,0.35);
       background: rgba(153,27,27,0.2);
       color: #ff8a8a;
       font-size: 14px;
     }
-    label { display: block; font-size: 13px; color: #cbd5e1; margin: 10px 0 6px; }
+    label { display: block; font-size: 13px; color: var(--text); margin: 10px 0 6px; }
     input {
       width: 100%;
       padding: 12px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(15,17,23,0.9);
-      color: #e4e4e7;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text);
       outline: none;
       font-size: 15px;
     }
     input:focus {
-      border-color: rgba(255,92,92,0.7);
-      box-shadow: 0 0 0 4px rgba(255,92,92,0.12);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-subtle);
     }
     .row { display: flex; gap: 10px; margin-top: 14px; }
     button {

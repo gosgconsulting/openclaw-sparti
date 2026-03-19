@@ -65,6 +65,10 @@ Active tasks, next steps, blockers, and verification notes.
 - **Test account summary**: ask the bot "show me my Sparti account" → bot should call `GET /api/sparti/summary` and format the counts.
 - **Optional: `SUPABASE_EDGE_FUNCTIONS` env var** — Set a comma-separated list of edge function slugs to restrict which functions the bot can invoke (e.g. `llmgateway-chat,workflow-ai,brand-voice-profile`). Without it, the full curated list is available.
 
+### UI improvement (step-by-step plan) — implemented
+
+- **Done (2026-03-19):** Steps 1–5 of `docs/PLAN_UI_IMPROVEMENTS.md` implemented. (1) **Shared tokens:** `src/design-tokens.js` exports dark theme `:root`, `focusVisibleStyles`, `flashStyles`, and `getDarkThemeBlock()`. Dashboard, Auth, Onboard, and ui-page use it; Mission Control keeps light theme and adds same token names + focus-visible. (2) **A11y:** `:focus-visible` on interactive elements; `aria-live="polite"` and `role="status"` on connect-success toasts (dashboard + MC); tab panels `role="tabpanel"` and `aria-label`; connectors list `aria-busy` while loading. (3) **Empty state:** Connectors “No connectors match your search” now includes “Try a different term or add an account from a card above.” (4) **Visual consistency:** Dashboard and Auth use `var(--*)` for colors, borders, radius. (5) **Mission Control:** Light theme kept; added `--teal-bright`, `--radius-md`, and shared focus-visible styles. Step 6 (DB for UI prefs) deferred; use localStorage for theme/sidebar if needed.
+
 ### Pending (pre-existing)
 
 - **Run Supabase migrations** — Apply `supabase/migrations/20260318_composio_connections.sql` and `supabase/migrations/20260319_composio_connections_multi_account.sql` before testing connectors (multi-account support).
@@ -99,6 +103,8 @@ Active tasks, next steps, blockers, and verification notes.
 ---
 
 ## Done
+
+- **UI improvement plan Steps 1–5 (2026-03-19):** Implemented `docs/PLAN_UI_IMPROVEMENTS.md`. (1) `src/design-tokens.js` — shared dark theme `:root`, focus-visible and flash styles; Dashboard, Auth, Onboard, ui-page inject tokens; Mission Control keeps light theme, adds same token names + focus-visible. (2) A11y: `:focus-visible` on buttons/links/inputs; `aria-live`/`role="status"` on success toasts; tab panels `role="tabpanel"`/`aria-label`; connectors list `aria-busy` while loading. (3) Empty state: connectors search now “Try a different term or add an account from a card above.” (4) Dashboard/Auth use `var(--*)` for colors, radius, borders. (5) Mission Control: `--teal-bright`, `--radius-md`, shared focus-visible. README UI and design subsection updated. 66/66 tests pass.
 
 - **Connectors: show connected emails, multiple accounts, Disconnect/Reconnect (2026-03-19):** (1) Migration `20260319_composio_connections_multi_account.sql` — dropped unique (user_id, toolkit_key), added unique (user_id, toolkit_key, connected_account_id) so multiple accounts per toolkit are allowed. (2) `listConnectedAccountsV3(userId, apiKey)` in `composio.js` — fetches connected accounts from Composio v3 API and returns id, toolkit_slug, email/label for display. (3) GET `/dashboard/connectors` now returns an `accounts` array per connector with `{ id, email, label }` so the UI can show which email is connected and support multiple accounts. (4) OAuth callback upserts by (user_id, toolkit_key, connected_account_id); connect/reconnect no longer write an "initiated" row. (5) POST disconnect accepts optional body `{ connectedAccountId }` to disconnect a specific account when multiple are connected. (6) Dashboard and Mission Control Connectors UI: each connected account shows email/label with Reconnect and Disconnect buttons (red Disconnect); request body includes `connectedAccountId` for disconnect/reconnect so the correct account is targeted.
 

@@ -8,6 +8,7 @@
  */
 
 import { getLangSelectorCSS, getLangSelectorHTML, getI18nBootstrapJS } from './i18n.js';
+import { darkThemeRoot, focusVisibleStyles } from './design-tokens.js';
 
 const LITE_TRANSLATIONS = {
   en: {
@@ -954,41 +955,8 @@ export function getUIPageHTML({ isConfigured, gatewayInfo, password, stateDir, g
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css"/>
   <style>
-    :root {
-      --bg: #12141a;
-      --bg-accent: #14161d;
-      --bg-elevated: #1a1d25;
-      --bg-hover: #262a35;
-      --card: #181b22;
-      --card-foreground: #f4f4f5;
-      --accent: #ff5c5c;
-      --accent-hover: #ff7070;
-      --accent-dark: #991b1b;
-      --accent-subtle: rgba(255, 92, 92, 0.15);
-      --accent-glow: rgba(255, 92, 92, 0.25);
-      --teal: #14b8a6;
-      --teal-bright: #00e5cc;
-      --teal-glow: rgba(20, 184, 166, 0.4);
-      --ok: #22c55e;
-      --danger: #ef4444;
-      --warn: #f59e0b;
-      --text: #e4e4e7;
-      --text-strong: #fafafa;
-      --muted: #71717a;
-      --muted-strong: #52525b;
-      --border: #27272a;
-      --border-strong: #3f3f46;
-      --font-body: 'Space Grotesk', 'Noto Sans SC', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      --font-display: 'Space Grotesk', 'Noto Sans SC', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-      --radius-sm: 6px;
-      --radius-md: 8px;
-      --radius-lg: 12px;
-      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03);
-      --duration-fast: 120ms;
-      --duration-normal: 200ms;
-    }
+    /* Shared design tokens - see src/design-tokens.js */
+    ${darkThemeRoot}${focusVisibleStyles}
     ::selection {
       background: var(--accent-subtle);
       color: var(--text-strong);

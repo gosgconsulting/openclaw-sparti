@@ -1,3 +1,5 @@
+import { getDarkThemeBlock } from './design-tokens.js';
+
 function escapeHtml(s) {
   return String(s)
     .replaceAll('&', '&amp;')
@@ -97,18 +99,19 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
   <title>OpenClaw - Dashboard</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"/>
   <style>
+    ${getDarkThemeBlock({ focusVisible: true, flash: true })}
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: #0f1117;
-      color: #e4e4e7;
-      font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
       letter-spacing: -0.02em;
     }
     header {
       padding: 18px 20px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      background: rgba(15,17,23,0.9);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elevated);
       position: sticky;
       top: 0;
       backdrop-filter: blur(8px);
@@ -120,12 +123,12 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       justify-content: space-between;
       gap: 12px;
     }
-    h1 { margin: 0; font-size: 18px; font-weight: 800; color: #fafafa; }
-    .meta { color: #a1a1aa; font-size: 13px; }
+    h1 { margin: 0; font-size: 18px; font-weight: 800; color: var(--text-strong); }
+    .meta { color: var(--muted); font-size: 13px; }
     .logout {
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(24,27,34,0.9);
-      color: #e4e4e7;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
       border-radius: 10px;
       padding: 10px 12px;
       cursor: pointer;
@@ -134,14 +137,14 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     main { padding: 20px 0 60px; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
     .card {
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(24,27,34,0.85);
-      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: var(--radius-lg);
       padding: 16px;
     }
     .error {
       padding: 10px 12px;
-      border-radius: 10px;
+      border-radius: var(--radius-md);
       border: 1px solid rgba(255,92,92,0.35);
       background: rgba(153,27,27,0.2);
       color: #ff8a8a;
@@ -150,28 +153,28 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     }
     .success {
       padding: 10px 12px;
-      border-radius: 10px;
+      border-radius: var(--radius-md);
       border: 1px solid rgba(0,229,204,0.35);
       background: rgba(0,229,204,0.08);
-      color: #00e5cc;
+      color: var(--teal-bright);
       font-size: 14px;
       margin-bottom: 12px;
     }
     form { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
-    label { display: block; font-size: 13px; color: #cbd5e1; margin: 0 0 6px; }
+    label { display: block; font-size: 13px; color: var(--text); margin: 0 0 6px; }
     input {
       padding: 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(15,17,23,0.9);
-      color: #e4e4e7;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text);
       outline: none;
       font-size: 15px;
       min-width: 260px;
     }
     input:focus {
-      border-color: rgba(0,229,204,0.7);
-      box-shadow: 0 0 0 4px rgba(0,229,204,0.12);
+      border-color: var(--teal-bright);
+      box-shadow: 0 0 0 4px var(--teal-glow);
     }
     button.primary {
       padding: 12px 14px;
@@ -188,33 +191,33 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       align-items: center;
       justify-content: center;
       gap: 8px;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(15,17,23,0.35);
-      color: #e4e4e7;
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text);
       font-weight: 800;
       text-decoration: none;
       cursor: pointer;
     }
-    .btn:hover { text-decoration: none; border-color: rgba(0,229,204,0.35); }
+    .btn:hover { text-decoration: none; border-color: var(--teal-bright); }
     .btn.small { padding: 8px 10px; font-size: 12px; border-radius: 999px; }
     .btn.primary {
       border: 0;
       background: linear-gradient(135deg, #00e5cc, #0ea5e9);
       color: #051018;
     }
-    .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #cbd5e1; }
-    .muted { color: #a1a1aa; }
-    .empty { color: #a1a1aa; font-size: 14px; padding: 10px 0 0; }
-    a { color: #00e5cc; text-decoration: none; }
+    .mono { font-family: var(--mono); font-size: 12px; color: var(--text); }
+    .muted { color: var(--muted); }
+    .empty { color: var(--muted); font-size: 14px; padding: 10px 0 0; }
+    a { color: var(--teal-bright); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
     .tabs {
       display: inline-flex;
       gap: 8px;
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(15,17,23,0.35);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
       padding: 6px;
       border-radius: 999px;
     }
@@ -224,25 +227,25 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       padding: 10px 12px;
       font-weight: 900;
       background: transparent;
-      color: #a1a1aa;
+      color: var(--muted);
       cursor: pointer;
     }
     .tab.active {
-      background: rgba(255,255,255,0.10);
-      color: #fafafa;
+      background: var(--bg-hover);
+      color: var(--text-strong);
     }
     .panel { display: none; }
     .panel.active { display: block; }
 
-    .section-title { margin: 0 0 10px 0; font-size: 16px; font-weight: 900; color:#fafafa; }
+    .section-title { margin: 0 0 10px 0; font-size: 16px; font-weight: 900; color: var(--text-strong); }
     .channel-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
     @media (min-width: 920px) {
       .channel-grid { grid-template-columns: 1fr 1fr; }
     }
     .channel-card {
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(24,27,34,0.75);
-      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: var(--radius-lg);
       padding: 14px;
     }
     .channel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
@@ -250,31 +253,31 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     .icon { width: 22px; height: 22px; display:inline-grid; place-items:center; margin-top: 2px; }
     .icon svg { width: 20px; height: 20px; }
     .emoji { font-size: 20px; line-height: 1; }
-    .name { font-weight: 900; color: #fafafa; }
+    .name { font-weight: 900; color: var(--text-strong); }
     .channel-meta { display:flex; gap:8px; align-items:center; }
     .badge {
       display:inline-flex;
       align-items:center;
       padding: 6px 10px;
       border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(15,17,23,0.55);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
       font-size: 12px;
-      color: #a1a1aa;
+      color: var(--muted);
       font-weight: 800;
       white-space: nowrap;
     }
-    .badge.on { border-color: rgba(0,229,204,0.35); color: #00e5cc; }
-    .badge.off { color: #a1a1aa; }
+    .badge.on { border-color: rgba(0,229,204,0.35); color: var(--teal-bright); }
+    .badge.off { color: var(--muted); }
     .channel-form { margin-top: 10px; display: grid; gap: 10px; }
     .row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
-    .toggle { display:flex; align-items:center; gap: 10px; color: #e4e4e7; font-weight: 800; }
+    .toggle { display:flex; align-items:center; gap: 10px; color: var(--text); font-weight: 800; }
     .toggle input { min-width: auto; }
     .fields { display:grid; grid-template-columns: 1fr; gap: 10px; }
     @media (min-width: 920px) { .fields { grid-template-columns: 1fr 1fr; } }
     .field input { min-width: 0; width: 100%; }
-    .help { font-size: 12px; color: #71717a; }
-    .help a { color: #00e5cc; }
+    .help { font-size: 12px; color: var(--muted); }
+    .help a { color: var(--teal-bright); }
   </style>
 </head>
 <body>
@@ -307,11 +310,11 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         </div>
       </div>
 
-      <div class="card panel active" id="panel-channels">
+      <div class="card panel active" id="panel-channels" role="tabpanel" aria-label="Channels">
         ${channelsHtml}
       </div>
 
-      <div class="card panel" id="panel-connectors">
+      <div class="card panel" id="panel-connectors" role="tabpanel" aria-label="Connectors">
         <h2 class="section-title">Connectors</h2>
         <div class="muted" style="margin-bottom:10px;">Powered by Composio. Connections are configured server-side.</div>
         <div id="connectors-error" class="error" style="display:none;"></div>
@@ -443,7 +446,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       }
 
       if (items.length === 0) {
-        list.innerHTML = '<div class="muted">No connectors match your search.</div>';
+        list.innerHTML = '<div class="empty-state muted" role="status">No connectors match your search. Try a different term or add an account from a card above.</div>';
       } else {
         list.innerHTML = items.map(c => renderOne(c, false)).join('');
       }
@@ -461,6 +464,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
       }
       err.style.display = 'none';
       loading.style.display = 'block';
+      list.setAttribute('aria-busy', 'true');
       list.innerHTML = '';
 
       try {
@@ -480,6 +484,7 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
         err.style.display = 'block';
       } finally {
         loading.style.display = 'none';
+        list.removeAttribute('aria-busy');
       }
     }
 
@@ -539,6 +544,8 @@ export function getDashboardPageHTML({ userEmail, instance, error, channelGroups
     if (/connect=success/.test(location.hash)) {
       const f = document.createElement('div');
       f.id = 'connect-flash';
+      f.setAttribute('aria-live', 'polite');
+      f.setAttribute('role', 'status');
       f.textContent = '✓ Connector linked successfully.';
       f.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#0d3d2e;color:#00e5cc;border:1px solid #00e5cc44;border-radius:8px;padding:12px 20px;font-size:13px;z-index:9999;';
       document.body.appendChild(f);

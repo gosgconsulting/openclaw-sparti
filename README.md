@@ -414,6 +414,14 @@ openclaw-railway/
         └── server-harness.js  # Server harness with mock CLI
 ```
 
+### UI and design
+
+**Design tokens:** Single source of truth in **`src/design-tokens.js`** (dark theme `:root`, focus-visible styles, flash classes). Dashboard, Auth, Onboard, and Lite (`ui-page.js`) inject these tokens; Mission Control keeps its light theme but uses the same token names (`--teal-bright`, `--radius-md`) and shared focus-visible styles for future theme switching. Default is dark; typography is Space Grotesk (Mission Control uses Inter by design).
+
+**Accessibility:** Buttons, links, and inputs use `:focus-visible` outlines; success/error toasts use `aria-live="polite"` and `role="status"` so screen readers announce them. Tab panels have `role="tabpanel"` and `aria-label`; connector list uses `aria-busy` while loading.
+
+**Plan:** Full step-by-step plan (empty states, loading, visual consistency, optional DB for UI prefs): **`docs/PLAN_UI_IMPROVEMENTS.md`**.
+
 ### How It Works
 
 ```
