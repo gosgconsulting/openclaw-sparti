@@ -291,6 +291,25 @@ Install skills from two sources:
 | `COMPOSIO_API_KEY` | Composio API key — enables connector OAuth flows (Google, GitHub, Slack, etc.) | — | No |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key — required for the Composio OAuth callback to persist connections (bypasses RLS). Also used for audit events and app_settings lookups. | — | No |
 
+### Supabase App Settings (optional)
+
+When `SUPABASE_SERVICE_ROLE_KEY` is set, the server can load shared config from
+`public.app_settings` as a fallback when env vars are missing.
+
+Expected schema:
+
+```sql
+CREATE TABLE app_settings (
+  key text primary key,
+  value jsonb not null
+);
+```
+
+Supported keys:
+
+- `llm_gateway` → `{ "base_url": "...", "api_key": "...", "model_id": "...", "provider_id": "...", "context_window": 200000, "max_tokens": 4096 }`
+- `composio` → `{ "api_key": "..." }`
+
 ### Railway Volume Setup
 
 **Required for data persistence:**
@@ -460,6 +479,17 @@ openclaw-railway/
 └── .npm-global/                # npm prefix (survives restarts)
     └── bin/                    # In-app upgraded openclaw binary
 ```
+
+### Supabase Persistence Model
+
+The app also persists user and instance state in Supabase (RLS enabled):
+
+- **Per-user instance registry** — `instances` (one row per user in SaaS mode, plus bot connectivity fields such as `gateway_url`, `supabase_url`, `bot_connected_at`, `bot_version`)
+- **Global server settings** — `app_settings` (`llm_gateway`, `composio`) read server-side via service role
+- **Mission Control** — `mc_boards`, `mc_tasks`, `mc_approval_requests`, `mc_audit_events`, `mc_board_groups`, `mc_tags`, `mc_agents`, `mc_prompts`
+- **Composio connections** — `composio_connections` (OAuth/account linkage)
+- **Bot session ledger** — `bot_sessions` (cross-platform thread/session tracking per user + instance)
+- **Bot token usage ledger** — `instance_token_usage` (persistent per-instance token + cost records)
 
 ## API Endpoints
 
