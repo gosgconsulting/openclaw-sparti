@@ -716,29 +716,21 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
   <nav class="sidebar">
     <div class="nav-section-label">Overview</div>
     <div class="nav-item" data-panel="dashboard"><span class="nav-icon">⊞</span> Dashboard</div>
-    <div class="nav-item" data-panel="live-feed"><span class="nav-icon">⚡</span> Live feed</div>
+    <div class="nav-item" data-panel="history"><span class="nav-icon">📜</span> History</div>
+    <div class="nav-item" data-panel="integrations"><span class="nav-icon">🔌</span> Integrations</div>
 
-    <div class="nav-section-label">Boards</div>
-    <div class="nav-item" data-panel="board-groups"><span class="nav-icon">▤</span> Board groups</div>
-    <div class="nav-item active" data-panel="boards"><span class="nav-icon">◫</span> Boards</div>
-    <div class="nav-item" data-panel="tags"><span class="nav-icon">🏷</span> Tags</div>
-    <div class="nav-item" data-panel="approvals"><span class="nav-icon">◎</span> Approvals</div>
-    <div class="nav-item" data-panel="custom-fields"><span class="nav-icon">⊞</span> Custom fields</div>
+    <div class="nav-section-label">Tasks</div>
+    <div class="nav-item active" data-panel="tasks"><span class="nav-icon">✓</span> Tasks</div>
 
     <div class="nav-section-label">Skills</div>
     <div class="nav-item" data-panel="marketplace"><span class="nav-icon">⊕</span> Marketplace</div>
-    <div class="nav-item" data-panel="packs"><span class="nav-icon">⊟</span> Packs</div>
-
-    <div class="nav-section-label">Automation</div>
+    <div class="nav-item" data-panel="agents"><span class="nav-icon">◉</span> Agents</div>
     <div class="nav-item" data-panel="prompts"><span class="nav-icon">⚡</span> Prompts</div>
 
-    <div class="nav-section-label">Integrations</div>
-    <div class="nav-item" data-panel="integrations"><span class="nav-icon">🔌</span> Integrations</div>
-
     <div class="nav-section-label">Administration</div>
-    <div class="nav-item" data-panel="organization"><span class="nav-icon">⊞</span> Organization</div>
     <div class="nav-item" data-panel="gateways"><span class="nav-icon">⊞</span> Gateways</div>
-    <div class="nav-item" data-panel="agents"><span class="nav-icon">◉</span> Agents</div>
+    <div class="nav-item" data-panel="brands"><span class="nav-icon">🏢</span> Brands</div>
+    <div class="nav-item" data-panel="logs"><span class="nav-icon">📊</span> Logs</div>
 
     <div class="nav-section-label" style="margin-top:8px;"></div>
     <div class="nav-item" onclick="window.location='/lite'"><span class="nav-icon">↗</span> Lite Panel</div>
@@ -771,48 +763,54 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       </div>
     </div>
 
-    <!-- Live Feed -->
-    <div id="panel-live-feed" class="panel">
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div class="page-title">Live feed</div>
-          <div class="page-sub">Real-time audit event stream.</div>
-        </div>
-        <button class="btn btn-secondary" onclick="loadLiveFeed()">↻ Refresh</button>
-      </div>
-      <div class="card" id="live-feed-list"><span class="spinner"></span></div>
-    </div>
-
-    <!-- Board Groups -->
-    <div id="panel-board-groups" class="panel">
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div class="page-title">Board groups</div>
-          <div class="page-sub">Organize boards into groups.</div>
-        </div>
-        <button class="btn btn-primary" onclick="openGroupModal()">+ New group</button>
-      </div>
-      <div id="groups-list"><span class="spinner"></span></div>
-    </div>
-
-    <!-- Boards -->
-    <div id="panel-boards" class="panel active">
+    <!-- History -->
+    <div id="panel-history" class="panel">
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
         <div>
-          <div class="page-title" id="boards-page-title">Boards</div>
-          <div class="page-sub">Manage your work boards.</div>
+          <div class="page-title">History</div>
+          <div class="page-sub">Chat session history across all brands and accounts.</div>
         </div>
-        <button class="btn btn-primary" onclick="openBoardModal()">+ New board</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select class="filter-select" id="history-brand-filter" onchange="loadHistory()">
+            <option value="">All brands</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadHistory()">↻ Refresh</button>
+        </div>
       </div>
-      <div id="boards-list"><span class="spinner"></span></div>
+      <div id="history-list"><span class="spinner"></span></div>
     </div>
+
+    <!-- History detail modal placeholder -->
+    <div id="panel-history-detail" class="panel" style="display:none;"></div>
+
+    <!-- Tasks (replaces Board groups, Boards, Tags, Approvals, Custom fields) -->
+    <div id="panel-tasks" class="panel active">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div class="page-title" id="tasks-page-title">Tasks</div>
+          <div class="page-sub" id="tasks-page-sub">Manage your work boards and tasks.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-secondary" onclick="openTaskSettings()" title="Manage board groups, tags, approvals, and custom fields">⚙ Settings</button>
+          <button class="btn btn-primary" onclick="openBoardModal()">+ New board</button>
+        </div>
+      </div>
+      <div id="tasks-boards-list"><span class="spinner"></span></div>
+    </div>
+
+    <!-- Hidden legacy panels (kept for kanban sub-panel navigation, not in sidebar) -->
+    <div id="panel-board-groups" class="panel" style="display:none!important;"></div>
+    <div id="panel-boards" class="panel" style="display:none!important;"></div>
 
     <!-- Tasks / Kanban -->
     <div id="panel-kanban" class="panel">
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div class="page-title" id="kanban-title">Board</div>
-          <div class="page-sub" id="kanban-sub">Keep tasks moving through your workflow.</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button class="btn btn-secondary btn-sm" onclick="setPanel('tasks')" title="Back to Tasks">← Tasks</button>
+          <div>
+            <div class="page-title" id="kanban-title">Board</div>
+            <div class="page-sub" id="kanban-sub">Keep tasks moving through your workflow.</div>
+          </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
           <div class="view-toggle">
@@ -859,55 +857,10 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       </div>
     </div>
 
-    <!-- Tags -->
-    <div id="panel-tags" class="panel">
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div class="page-title">Tags</div>
-          <div class="page-sub" id="tags-sub">Loading…</div>
-        </div>
-        <button class="btn btn-primary" onclick="openTagModal()">+ New tag</button>
-      </div>
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Tag ↑</th>
-              <th>Color ↕</th>
-              <th>Tasks ↕</th>
-              <th>Updated ↕</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="tags-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Approvals -->
-    <div id="panel-approvals" class="panel">
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div class="page-title">Approvals</div>
-          <div class="page-sub">Governance and approval requests.</div>
-        </div>
-        <button class="btn btn-primary" onclick="openApprovalModal()">+ Request approval</button>
-      </div>
-      <div id="approvals-list"><span class="spinner"></span></div>
-    </div>
-
-    <!-- Custom Fields (placeholder) -->
-    <div id="panel-custom-fields" class="panel">
-      <div class="page-header">
-        <div class="page-title">Custom fields</div>
-        <div class="page-sub">Define custom metadata fields for tasks.</div>
-      </div>
-      <div class="empty">
-        <div class="empty-icon">⊞</div>
-        <div class="empty-title">Custom fields coming soon</div>
-        <div class="empty-sub">Define custom metadata fields to attach to tasks and boards.</div>
-      </div>
-    </div>
+    <!-- Tags, Approvals, Custom Fields — now inside Task Settings modal, not standalone panels -->
+    <div id="panel-tags" style="display:none!important;"></div>
+    <div id="panel-approvals" style="display:none!important;"></div>
+    <div id="panel-custom-fields" style="display:none!important;"></div>
 
     <!-- Marketplace -->
     <div id="panel-marketplace" class="panel">
@@ -950,30 +903,36 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       </div>
     </div>
 
-    <!-- Packs (placeholder) -->
-    <div id="panel-packs" class="panel">
-      <div class="page-header">
-        <div class="page-title">Packs</div>
-        <div class="page-sub">Skill packs bundled for deployment.</div>
+    <!-- Brands (replaces Organization) -->
+    <div id="panel-brands" class="panel">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div class="page-title">Brands</div>
+          <div class="page-sub" id="brands-sub">Your brands and accounts.</div>
+        </div>
+        <button class="btn btn-secondary" onclick="loadBrands()">↻ Refresh</button>
       </div>
-      <div class="empty">
-        <div class="empty-icon">⊟</div>
-        <div class="empty-title">No packs configured</div>
-        <div class="empty-sub">Packs bundle multiple skills for easy deployment.</div>
-      </div>
+      <div id="brands-list"><span class="spinner"></span></div>
     </div>
 
-    <!-- Organization (placeholder) -->
-    <div id="panel-organization" class="panel">
-      <div class="page-header">
-        <div class="page-title">Organization</div>
-        <div class="page-sub">Manage your organization settings.</div>
+    <!-- Logs (token usage history) -->
+    <div id="panel-logs" class="panel">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div class="page-title">Logs</div>
+          <div class="page-sub">Token usage history across all providers.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select class="filter-select" id="logs-days-filter" onchange="loadLogs()">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadLogs()">↻ Refresh</button>
+        </div>
       </div>
-      <div class="empty">
-        <div class="empty-icon">⊞</div>
-        <div class="empty-title">Organization settings</div>
-        <div class="empty-sub">Configure organization-level settings, members, and billing.</div>
-      </div>
+      <div id="logs-summary" style="margin-bottom:16px;"></div>
+      <div id="logs-list"><span class="spinner"></span></div>
     </div>
 
     <!-- Gateways -->
@@ -1236,6 +1195,61 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     </div>
   </div>
 
+  <!-- ── Task Settings Modal ── -->
+  <div class="modal-backdrop" id="task-settings-modal">
+    <div class="modal" style="max-width:620px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+      <div class="modal-header">
+        <div class="modal-title">Task Settings</div>
+        <button class="modal-close" onclick="closeModal('task-settings-modal')">✕</button>
+      </div>
+      <div style="display:flex;gap:4px;padding:0 0 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <button class="btn btn-secondary btn-sm active" id="ts-tab-groups" onclick="loadTaskSettingsTab('groups')">Board Groups</button>
+        <button class="btn btn-secondary btn-sm" id="ts-tab-tags" onclick="loadTaskSettingsTab('tags')">Tags</button>
+        <button class="btn btn-secondary btn-sm" id="ts-tab-approvals" onclick="loadTaskSettingsTab('approvals')">Approvals</button>
+        <button class="btn btn-secondary btn-sm" id="ts-tab-custom-fields" onclick="loadTaskSettingsTab('custom-fields')">Custom Fields</button>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding-top:12px;">
+        <!-- Groups sub-panel -->
+        <div id="ts-pnl-groups">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span style="font-size:13px;color:var(--muted);">Organize boards into groups.</span>
+            <button class="btn btn-primary btn-sm" onclick="openGroupModal()">+ New group</button>
+          </div>
+          <div id="groups-list"><span class="spinner"></span></div>
+        </div>
+        <!-- Tags sub-panel -->
+        <div id="ts-pnl-tags" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span style="font-size:13px;color:var(--muted);">Label and categorize tasks.</span>
+            <button class="btn btn-primary btn-sm" onclick="openTagModal()">+ New tag</button>
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Tag</th><th>Color</th><th>Tasks</th><th></th></tr></thead>
+              <tbody id="tags-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <!-- Approvals sub-panel -->
+        <div id="ts-pnl-approvals" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span style="font-size:13px;color:var(--muted);">Governance and approval requests.</span>
+            <button class="btn btn-primary btn-sm" onclick="openApprovalModal()">+ Request approval</button>
+          </div>
+          <div id="approvals-list"><span class="spinner"></span></div>
+        </div>
+        <!-- Custom Fields sub-panel -->
+        <div id="ts-pnl-custom-fields" style="display:none;">
+          <div class="empty" style="padding:24px 0;">
+            <div class="empty-icon">⊞</div>
+            <div class="empty-title">Custom fields coming soon</div>
+            <div class="empty-sub">Define custom metadata fields to attach to tasks and boards.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // ── State ──────────────────────────────────────────────────────────────────
     let currentBoardId = null;
@@ -1244,6 +1258,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     let allTasks = [];
     let allSkills = [];
     let currentView = 'board';
+    let allBrandsMap = {};
 
     // ── User avatar initials ───────────────────────────────────────────────────
     (function() {
@@ -1274,18 +1289,16 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       navItems.forEach(n => n.classList.toggle('active', n.dataset.panel === name));
       history.replaceState(null, '', '#' + name);
       if (name === 'dashboard') loadDashboard();
-      if (name === 'live-feed') loadLiveFeed();
-      if (name === 'board-groups') loadGroups();
-      if (name === 'boards') loadBoards();
-      if (name === 'tags') loadTags();
-      if (name === 'approvals') loadApprovals();
+      if (name === 'history') loadHistory();
+      if (name === 'tasks') loadTasksPanel();
       if (name === 'marketplace') loadMarketplace();
-      if (name === 'gateways') loadGateway();
       if (name === 'agents') loadAgents();
       if (name === 'prompts') loadPrompts();
-      if (name === 'integrations') {
-        setIntegrationTab(currentIntTab);
-      }
+      if (name === 'integrations') setIntegrationTab(currentIntTab);
+      if (name === 'gateways') loadGateway();
+      if (name === 'brands') loadBrands();
+      if (name === 'logs') loadLogs();
+      if (name === 'kanban') { /* loaded by openBoard() */ }
     }
     navItems.forEach(n => n.addEventListener('click', () => setPanel(n.dataset.panel)));
 
@@ -1385,33 +1398,147 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       }
     }
 
-    // ── Live Feed ──────────────────────────────────────────────────────────────
-    async function loadLiveFeed() {
-      const el = document.getElementById('live-feed-list');
+    // ── History ────────────────────────────────────────────────────────────────
+    let historyBrandsLoaded = false;
+    async function loadHistory() {
+      const el = document.getElementById('history-list');
       el.innerHTML = '<span class="spinner"></span>';
+
+      // Populate brand filter on first load
+      if (!historyBrandsLoaded) {
+        try {
+          const bd = await api('GET', '/mission-control/api/brands');
+          const sel = document.getElementById('history-brand-filter');
+          (bd.brands || []).forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b.id;
+            opt.textContent = b.name;
+            sel.appendChild(opt);
+          });
+          historyBrandsLoaded = true;
+        } catch { /* non-fatal */ }
+      }
+
+      const brandId = document.getElementById('history-brand-filter')?.value || '';
+      const url = '/mission-control/api/history?limit=50' + (brandId ? '&brand_id=' + encodeURIComponent(brandId) : '');
       try {
-        const data = await api('GET', '/mission-control/api/live-feed?limit=50');
-        const events = data.events || [];
-        if (events.length === 0) {
-          el.innerHTML = '<div class="empty"><div class="empty-icon">⚡</div><div class="empty-title">No events yet</div><div class="empty-sub">Activity will appear here as you use Mission Control.</div></div>';
+        const data = await api('GET', url);
+        const sessions = data.sessions || [];
+        if (sessions.length === 0) {
+          el.innerHTML = '<div class="empty"><div class="empty-icon">📜</div><div class="empty-title">No chat history yet</div><div class="empty-sub">Sessions will appear here as your bot is used across brands and platforms.</div></div>';
           return;
         }
-        el.innerHTML = events.map(e => \`
-          <div class="feed-item">
-            <div class="feed-icon">\${feedIcon(e.event_type)}</div>
-            <div class="feed-body">
-              <div class="feed-event">\${esc(e.event_type)}</div>
-              <div class="feed-actor">\${esc(e.actor || 'system')} · \${esc(JSON.stringify(e.payload || {})).slice(0, 80)}</div>
-            </div>
-            <div class="feed-time">\${fmtDate(e.created_at)}</div>
-          </div>
-        \`).join('');
+        el.innerHTML = \`<div class="data-table-wrap"><table class="data-table">
+          <thead><tr>
+            <th>Platform</th><th>Brand</th><th>Thread</th><th>Messages</th><th>Last active</th><th>Started</th>
+          </tr></thead>
+          <tbody>\${sessions.map(s => \`<tr onclick="viewHistorySession(\${toJson(s)})" style="cursor:pointer;">
+            <td>
+              <span style="display:inline-flex;align-items:center;gap:5px;">
+                <span style="font-size:16px;">\${platformIcon(s.platform)}</span>
+                <span style="font-weight:500;">\${esc(s.platform || '—')}</span>
+              </span>
+            </td>
+            <td style="color:var(--muted);font-size:12px;">\${esc(s.brand_id ? (allBrandsMap[s.brand_id] || s.brand_id.slice(0,8)+'…') : '—')}</td>
+            <td style="font-family:monospace;font-size:11px;color:var(--muted);">\${esc(s.thread_id || '—')}</td>
+            <td style="text-align:center;">\${s.message_count ?? '—'}</td>
+            <td style="font-size:12px;">\${s.last_message_at ? fmtDate(s.last_message_at) : '—'}</td>
+            <td style="font-size:12px;color:var(--muted);">\${fmtDate(s.created_at)}</td>
+          </tr>\`).join('')}
+          </tbody></table></div>\`;
       } catch (err) {
-        el.innerHTML = \`<div class="flash error">Failed to load feed: \${esc(err.message)}</div>\`;
+        el.innerHTML = \`<div class="flash error">Failed to load history: \${esc(err.message)}</div>\`;
       }
     }
 
-    // ── Board Groups ───────────────────────────────────────────────────────────
+    function platformIcon(p) {
+      const icons = { telegram: '✈', discord: '💬', slack: '📢', whatsapp: '📱', signal: '🔒', matrix: '⊞', irc: '💻', teams: '👥' };
+      return icons[(p || '').toLowerCase()] || '💬';
+    }
+
+    let historySessionData = null;
+    function viewHistorySession(session) {
+      historySessionData = session;
+      const meta = session.metadata || {};
+      const detail = \`<div class="page-header" style="display:flex;align-items:center;gap:12px;">
+        <button class="btn btn-secondary btn-sm" onclick="setPanel('history')">← Back</button>
+        <div>
+          <div class="page-title">\${esc(session.platform || 'Session')} — \${esc(session.thread_id || session.id)}</div>
+          <div class="page-sub">Started \${fmtDate(session.created_at)} · \${session.message_count ?? 0} messages</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Session details</div>
+        <table class="data-table" style="margin-top:8px;">
+          <tbody>
+            <tr><td style="color:var(--muted);width:140px;">Platform</td><td>\${esc(session.platform || '—')}</td></tr>
+            <tr><td style="color:var(--muted);">Thread ID</td><td style="font-family:monospace;font-size:12px;">\${esc(session.thread_id || '—')}</td></tr>
+            <tr><td style="color:var(--muted);">Brand</td><td>\${esc(session.brand_id ? (allBrandsMap[session.brand_id] || session.brand_id) : '—')}</td></tr>
+            <tr><td style="color:var(--muted);">Instance</td><td style="font-family:monospace;font-size:12px;">\${esc(session.instance_id || '—')}</td></tr>
+            <tr><td style="color:var(--muted);">Messages</td><td>\${session.message_count ?? '—'}</td></tr>
+            <tr><td style="color:var(--muted);">Last active</td><td>\${session.last_message_at ? fmtDate(session.last_message_at) : '—'}</td></tr>
+          </tbody>
+        </table>
+        \${Object.keys(meta).length > 0 ? \`<div style="margin-top:14px;"><div class="card-title" style="margin-bottom:8px;">Metadata</div><pre style="font-size:11px;background:var(--surface2);padding:10px;border-radius:6px;overflow:auto;">\${esc(JSON.stringify(meta, null, 2))}</pre></div>\` : ''}
+      </div>\`;
+      const detailPanel = document.getElementById('panel-history-detail');
+      detailPanel.innerHTML = detail;
+      detailPanel.style.display = '';
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      detailPanel.classList.add('active');
+      navItems.forEach(n => n.classList.toggle('active', n.dataset.panel === 'history'));
+    }
+
+    // ── Tasks Panel (unified: board list + kanban) ──────────────────────────────
+    async function loadTasksPanel() {
+      const el = document.getElementById('tasks-boards-list');
+      el.innerHTML = '<span class="spinner"></span>';
+      try {
+        const data = await api('GET', '/mission-control/api/boards');
+        allBoards = data.boards || [];
+        populateBoardSelects(allBoards);
+        if (allBoards.length === 0) {
+          el.innerHTML = \`<div class="empty"><div class="empty-icon">✓</div><div class="empty-title">No boards yet</div><div class="empty-sub">Create a board to start organizing tasks. Use ⚙ Settings to manage groups, tags, and approvals.</div></div>\`;
+          return;
+        }
+        el.innerHTML = \`<div class="boards-grid">\${allBoards.map(b => \`
+          <div class="board-card" onclick="openBoard('\${esc(b.id)}', '\${esc(b.name)}')">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+              <div class="board-card-name">\${esc(b.name)}</div>
+              <span class="board-status-badge \${esc(b.status || 'active')}">\${esc(b.status || 'active')}</span>
+            </div>
+            <div class="board-card-desc">\${esc(b.description || '')}</div>
+            <div class="board-card-meta">
+              <span>\${fmtDate(b.created_at)}</span>
+              <span style="margin-left:auto;">
+                <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openBoardModal(\${toJson(b)})">Edit</button>
+                <button class="btn btn-danger btn-sm" style="margin-left:4px;" onclick="event.stopPropagation();deleteBoard('\${esc(b.id)}')">Delete</button>
+              </span>
+            </div>
+          </div>
+        \`).join('')}</div>\`;
+      } catch (err) {
+        el.innerHTML = \`<div class="flash error">Failed to load tasks: \${esc(err.message)}</div>\`;
+      }
+    }
+
+    // Task settings modal (board groups, tags, approvals, custom fields)
+    function openTaskSettings() { openModal('task-settings-modal'); loadTaskSettingsTab('groups'); }
+    let currentTaskSettingsTab = 'groups';
+    function loadTaskSettingsTab(tab) {
+      currentTaskSettingsTab = tab;
+      ['groups','tags','approvals','custom-fields'].forEach(t => {
+        const btn = document.getElementById('ts-tab-' + t);
+        if (btn) btn.classList.toggle('active', t === tab);
+        const pnl = document.getElementById('ts-pnl-' + t);
+        if (pnl) pnl.style.display = t === tab ? '' : 'none';
+      });
+      if (tab === 'groups') loadGroups();
+      if (tab === 'tags') loadTags();
+      if (tab === 'approvals') loadApprovals();
+    }
+
+    // ── Board Groups (used inside Task Settings modal) ─────────────────────────
     async function loadGroups() {
       const el = document.getElementById('groups-list');
       el.innerHTML = '<span class="spinner"></span>';
@@ -1473,37 +1600,8 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
     }
 
     // ── Boards ─────────────────────────────────────────────────────────────────
-    async function loadBoards() {
-      const el = document.getElementById('boards-list');
-      el.innerHTML = '<span class="spinner"></span>';
-      try {
-        const data = await api('GET', '/mission-control/api/boards');
-        allBoards = data.boards || [];
-        populateBoardSelects(allBoards);
-        if (allBoards.length === 0) {
-          el.innerHTML = \`<div class="empty"><div class="empty-icon">◫</div><div class="empty-title">No boards yet</div><div class="empty-sub">Create a board to start organizing tasks.</div></div>\`;
-          return;
-        }
-        el.innerHTML = \`<div class="boards-grid">\${allBoards.map(b => \`
-          <div class="board-card" onclick="openBoard('\${esc(b.id)}', '\${esc(b.name)}')">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-              <div class="board-card-name">\${esc(b.name)}</div>
-              <span class="board-status-badge \${esc(b.status || 'active')}">\${esc(b.status || 'active')}</span>
-            </div>
-            <div class="board-card-desc">\${esc(b.description || '')}</div>
-            <div class="board-card-meta">
-              <span>\${fmtDate(b.created_at)}</span>
-              <span style="margin-left:auto;">
-                <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openBoardModal(\${toJson(b)})">Edit</button>
-                <button class="btn btn-danger btn-sm" style="margin-left:4px;" onclick="event.stopPropagation();deleteBoard('\${esc(b.id)}')">Delete</button>
-              </span>
-            </div>
-          </div>
-        \`).join('')}</div>\`;
-      } catch (err) {
-        el.innerHTML = \`<div class="flash error">Failed to load boards: \${esc(err.message)}</div>\`;
-      }
-    }
+    // loadBoards is kept as a thin alias for loadTasksPanel (legacy call sites)
+    function loadBoards() { return loadTasksPanel(); }
 
     function populateBoardSelects(boards) {
       ['agent-board-id'].forEach(selId => {
@@ -1521,7 +1619,12 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       currentBoardName = name;
       document.getElementById('kanban-title').textContent = name;
       document.getElementById('kanban-sub').textContent = 'Keep tasks moving through your workflow.';
-      setPanel('kanban');
+      // Show kanban panel (not in sidebar, navigate manually)
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      const kp = document.getElementById('panel-kanban');
+      if (kp) kp.classList.add('active');
+      navItems.forEach(n => n.classList.toggle('active', n.dataset.panel === 'tasks'));
+      history.replaceState(null, '', '#tasks');
       loadTasks(id);
     }
 
@@ -1552,7 +1655,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
           showFlash('Board created.');
         }
         closeModal('board-modal');
-        loadBoards();
+        loadTasksPanel();
       } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
     }
 
@@ -1561,7 +1664,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       try {
         await api('DELETE', \`/mission-control/api/boards/\${id}\`);
         showFlash('Board deleted.');
-        loadBoards();
+        loadTasksPanel();
       } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
     }
 
@@ -1720,7 +1823,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       try {
         const data = await api('GET', '/mission-control/api/tags');
         const tags = data.tags || [];
-        document.getElementById('tags-sub').textContent = tags.length + ' tag' + (tags.length !== 1 ? 's' : '') + ' configured.';
+        const tagsSub = document.getElementById('tags-sub'); if (tagsSub) tagsSub.textContent = tags.length + ' tag' + (tags.length !== 1 ? 's' : '') + ' configured.';
         if (tags.length === 0) {
           tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;">No tags yet.</td></tr>';
           return;
@@ -2034,6 +2137,84 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       } catch (err) { showFlash('Failed: ' + err.message, 'error'); }
     }
 
+    // ── Brands ─────────────────────────────────────────────────────────────────
+    async function loadBrands() {
+      const el = document.getElementById('brands-list');
+      el.innerHTML = '<span class="spinner"></span>';
+      try {
+        const data = await api('GET', '/mission-control/api/brands');
+        const brands = data.brands || [];
+        allBrandsMap = Object.fromEntries(brands.map(b => [b.id, b.name]));
+        document.getElementById('brands-sub').textContent = brands.length + ' brand' + (brands.length !== 1 ? 's' : '') + ' in your account.';
+        if (brands.length === 0) {
+          el.innerHTML = '<div class="empty"><div class="empty-icon">🏢</div><div class="empty-title">No brands found</div><div class="empty-sub">Create brands in your Sparti account to manage them here.</div></div>';
+          return;
+        }
+        el.innerHTML = \`<div class="boards-grid">\${brands.map(b => \`
+          <div class="board-card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+              \${b.logo_url ? \`<img src="\${esc(b.logo_url)}" alt="" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">\` : \`<div style="width:32px;height:32px;background:var(--accent-light);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px;">🏢</div>\`}
+              <div>
+                <div class="board-card-name">\${esc(b.name)}</div>
+                \${b.industry ? \`<div style="font-size:11px;color:var(--muted);">\${esc(b.industry)}</div>\` : ''}
+              </div>
+              <span style="margin-left:auto;" class="board-status-badge \${b.is_active !== false ? 'active' : 'archived'}">\${b.is_active !== false ? 'active' : 'inactive'}</span>
+            </div>
+            \${b.description ? \`<div class="board-card-desc">\${esc(b.description)}</div>\` : ''}
+            <div class="board-card-meta">
+              \${b.website ? \`<a href="\${esc(b.website)}" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:12px;">\${esc(b.website)}</a>\` : ''}
+              <span style="margin-left:auto;font-size:11px;color:var(--muted);">\${fmtDate(b.created_at)}</span>
+            </div>
+          </div>
+        \`).join('')}</div>\`;
+      } catch (err) {
+        el.innerHTML = \`<div class="flash error">Failed to load brands: \${esc(err.message)}</div>\`;
+      }
+    }
+
+    // ── Logs ───────────────────────────────────────────────────────────────────
+    async function loadLogs() {
+      const el = document.getElementById('logs-list');
+      const summaryEl = document.getElementById('logs-summary');
+      el.innerHTML = '<span class="spinner"></span>';
+      summaryEl.innerHTML = '';
+      const days = document.getElementById('logs-days-filter')?.value || '30';
+      try {
+        const data = await api('GET', \`/mission-control/api/logs?limit=200&days=\${days}\`);
+        const logs = data.logs || [];
+        const t = data.totals || {};
+        const fmtTokens = n => n >= 1000000 ? (n/1000000).toFixed(2) + 'M' : n >= 1000 ? (n/1000).toFixed(1) + 'K' : String(n);
+        summaryEl.innerHTML = \`<div class="stats-grid" style="margin-bottom:0;">
+          <div class="stat-card"><div class="stat-label">Total tokens</div><div class="stat-value">\${fmtTokens(t.total_tokens || 0)}</div></div>
+          <div class="stat-card"><div class="stat-label">Input tokens</div><div class="stat-value">\${fmtTokens(t.input_tokens || 0)}</div></div>
+          <div class="stat-card"><div class="stat-label">Output tokens</div><div class="stat-value">\${fmtTokens(t.output_tokens || 0)}</div></div>
+          <div class="stat-card"><div class="stat-label">Est. cost</div><div class="stat-value" style="font-size:22px;">\$\${(t.estimated_cost_usd || 0).toFixed(4)}</div><div class="stat-sub">last \${data.days} days</div></div>
+        </div>\`;
+        if (logs.length === 0) {
+          el.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">No usage logs yet</div><div class="empty-sub">Token usage will appear here as your agents and bot are used.</div></div>';
+          return;
+        }
+        el.innerHTML = \`<div class="data-table-wrap"><table class="data-table">
+          <thead><tr>
+            <th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th><th>Session</th><th>Date</th>
+          </tr></thead>
+          <tbody>\${logs.map(r => \`<tr>
+            <td style="font-weight:500;font-size:12px;">\${esc(r.model || '—')}</td>
+            <td style="font-size:12px;color:var(--muted);">\${esc(r.provider || r.metadata?.source || '—')}</td>
+            <td style="font-size:12px;text-align:right;">\${fmtTokens(r.input_tokens || 0)}</td>
+            <td style="font-size:12px;text-align:right;">\${fmtTokens(r.output_tokens || 0)}</td>
+            <td style="font-size:12px;font-weight:600;text-align:right;">\${fmtTokens(r.total_tokens || 0)}</td>
+            <td style="font-size:12px;text-align:right;">\${r.estimated_cost_usd ? '\$' + Number(r.estimated_cost_usd).toFixed(5) : '—'}</td>
+            <td style="font-family:monospace;font-size:10px;color:var(--muted);">\${r.session_id ? r.session_id.slice(0,12)+'…' : '—'}</td>
+            <td style="font-size:12px;color:var(--muted);">\${fmtDate(r.created_at)}</td>
+          </tr>\`).join('')}
+          </tbody></table></div>\`;
+      } catch (err) {
+        el.innerHTML = \`<div class="flash error">Failed to load logs: \${esc(err.message)}</div>\`;
+        summaryEl.innerHTML = '';
+      }
+    }
+
     // ── Prompts ─────────────────────────────────────────────────────────────────
     const PROMPT_TYPE_HINTS = {
       workflow: '{"edge_fn_slug":"workflow-ai","workflow":"project-doc-planner","brand_id":"optional-uuid"}',
@@ -2058,7 +2239,6 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       el.innerHTML = '<span class="spinner"></span>';
       try {
         const { prompts } = await api('GET', '/mission-control/api/prompts');
-        const sub = document.getElementById('agents-sub');
         if (!prompts.length) {
           el.innerHTML = \`<div style="color:#94a3b8;padding:32px;text-align:center;">
             No prompts yet. Create one with <strong>+ New prompt</strong> or ask the bot to <strong>save this as /shortcode</strong>.
@@ -2393,7 +2573,7 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
 
     // ── Init ───────────────────────────────────────────────────────────────────
     const hash = location.hash.replace('#', '');
-    const validPanels = ['dashboard','live-feed','board-groups','boards','kanban','tags','approvals','custom-fields','marketplace','packs','organization','gateways','agents','prompts','integrations'];
+    const validPanels = ['dashboard','history','tasks','kanban','marketplace','agents','prompts','integrations','gateways','brands','logs'];
     // Set initial active state for integration tabs
     document.getElementById('itab-channels').classList.add('itab-active');
 
@@ -2440,8 +2620,8 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
       if (hash && validPanels.includes(hash)) {
         setPanel(hash);
       } else {
-        setPanel('boards');
-        loadBoards();
+        setPanel('tasks');
+        loadTasksPanel();
       }
     })();
   </script>

@@ -489,7 +489,7 @@ The app also persists user and instance state in Supabase (RLS enabled):
 - **Mission Control** — `mc_boards`, `mc_tasks`, `mc_approval_requests`, `mc_audit_events`, `mc_board_groups`, `mc_tags`, `mc_agents`, `mc_prompts`
 - **Composio connections** — `composio_connections` (OAuth/account linkage)
 - **Bot session ledger** — `bot_sessions` (cross-platform thread/session tracking per user + instance)
-- **Bot token usage ledger** — `instance_token_usage` (persistent per-instance token + cost records)
+- **Bot token usage** — `global_ai_token_usage` (shared with main Sparti SaaS; bot writes rows with `provider='openclaw'` and `metadata.source='openclaw'`; `/lite/api/usage` reads from it as a fallback when gateway RPC is unavailable)
 
 ## API Endpoints
 
@@ -590,6 +590,7 @@ Connection state is persisted in the `composio_connections` Supabase table (migr
 |--------|------|-------------|
 | POST | `/api/composio/connect-link` | Generate a Composio OAuth Connect Link from inside the bot. Body: `{ toolkitKey, userId?, returnTo?, origin? }`. Pass a real Supabase `userId` for per-user linking (falls back to `bot-shared`); `returnTo` defaults to `/mission-control#integrations`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
 | POST | `/api/composio/connect-api-key` | Connect a service using an API key, Bearer token, or Basic auth — no OAuth redirect needed. Body: `{ toolkitKey, credentials: { api_key?, token?, username?, password? }, authScheme? }`. Returns `{ ok: true, connectedAccountId }`. Connection is immediately active. Protected by `SETUP_PASSWORD` Bearer token. Users can paste the key in chat (e.g. "connect productive.io with api: xyz"); the bot calls this endpoint and confirms without echoing the key. |
+| POST | `/api/usage` | Push a per-request token usage record into `global_ai_token_usage`. Body: `{ model, provider?, request_id?, input_tokens, output_tokens, total_tokens?, estimated_cost_usd?, source?, session_id?, instance_id? }`. `user_id` resolved from `x-user-id` header → `SPARTI_USER_ID` env var → null. Rows are stored with `provider='openclaw'` and `metadata.source='openclaw'` so they can be filtered separately from Sparti SaaS usage. Protected by `SETUP_PASSWORD` Bearer token. |
 
 ### Sparti Context (Supabase auth required)
 

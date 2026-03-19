@@ -85,70 +85,82 @@ router.get('/api/overview', async (req, res) => {
   return res.json({ gateway, openTasks, pendingApprovals, sessions, recentAudit });
 });
 
-// ── Boards ────────────────────────────────────────────────────────────────────
+// ── Boards (backed by the unified `projects` table) ───────────────────────────
+//
+// mc_boards was merged into `projects` via migration 20260320_unify_tasks_projects.sql.
+// The URL shape (/api/boards/*) is preserved so the MC frontend needs no URL changes.
+// Field mapping: name → title, sparti_brand_id → brand_id.
 
 router.get('/api/boards', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
   const { data, error } = await supabase
-    .from('mc_boards')
-    .select('id,name,description,status,sparti_brand_id,sparti_project_id,created_at')
+    .from('projects')
+    .select('id,title,description,status,brand_id,is_active,created_at,updated_at')
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ boards: data || [] });
+  // Normalise to legacy shape so frontend requires no change: title→name, brand_id→sparti_brand_id
+  const boards = (data || []).map(normaliseProject);
+  return res.json({ boards });
 });
 
 router.post('/api/boards', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { name, description, sparti_brand_id, sparti_project_id } = req.body || {};
-  if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+  const { name, title, description, brand_id, sparti_brand_id } = req.body || {};
+  const resolvedTitle = (title || name || '').trim();
+  if (!resolvedTitle) return res.status(400).json({ error: 'name is required' });
+  const resolvedBrandId = brand_id || sparti_brand_id || null;
 
   const { data, error } = await supabase
-    .from('mc_boards')
+    .from('projects')
     .insert({
       user_id: req.user.id,
-      name: String(name).trim(),
+      title: resolvedTitle,
       description: description ? String(description).trim() : null,
       status: 'active',
-      sparti_brand_id: sparti_brand_id || null,
-      sparti_project_id: sparti_project_id || null,
+      is_active: true,
+      brand_id: resolvedBrandId,
     })
-    .select('id,name,description,status,sparti_brand_id,sparti_project_id,created_at')
+    .select('id,title,description,status,brand_id,is_active,created_at,updated_at')
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
-  emitAudit(supabase, { userId: req.user.id, eventType: 'board.created', actor: req.user.email || req.user.id, payload: { boardId: data.id, name: data.name } });
-  return res.status(201).json({ board: data });
+  emitAudit(supabase, { userId: req.user.id, eventType: 'board.created', actor: req.user.email || req.user.id, payload: { boardId: data.id, name: data.title } });
+  return res.status(201).json({ board: normaliseProject(data) });
 });
 
 router.patch('/api/boards/:id', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
-  const { name, description, status, sparti_brand_id, sparti_project_id } = req.body || {};
+  const { name, title, description, status, brand_id, sparti_brand_id } = req.body || {};
   const updates = {};
-  if (name != null) updates.name = String(name).trim();
+  const resolvedTitle = title ?? name;
+  if (resolvedTitle != null) updates.title = String(resolvedTitle).trim();
   if (description != null) updates.description = String(description).trim();
-  if (status != null) updates.status = String(status).trim();
-  if (sparti_brand_id !== undefined) updates.sparti_brand_id = sparti_brand_id || null;
-  if (sparti_project_id !== undefined) updates.sparti_project_id = sparti_project_id || null;
+  if (status != null) {
+    updates.status = String(status).trim();
+    updates.is_active = updates.status === 'active';
+  }
+  const resolvedBrandId = brand_id !== undefined ? brand_id : sparti_brand_id;
+  if (resolvedBrandId !== undefined) updates.brand_id = resolvedBrandId || null;
 
   const { data, error } = await supabase
-    .from('mc_boards')
+    .from('projects')
     .update(updates)
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
-    .select('id,name,description,status,sparti_brand_id,sparti_project_id,created_at')
+    .select('id,title,description,status,brand_id,is_active,created_at,updated_at')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Board not found' });
 
   emitAudit(supabase, { userId: req.user.id, eventType: 'board.updated', actor: req.user.email || req.user.id, payload: { boardId: data.id, updates } });
-  return res.json({ board: data });
+  return res.json({ board: normaliseProject(data) });
 });
 
 router.delete('/api/boards/:id', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
   const { error } = await supabase
-    .from('mc_boards')
+    .from('projects')
     .delete()
     .eq('id', req.params.id)
     .eq('user_id', req.user.id);
@@ -158,28 +170,51 @@ router.delete('/api/boards/:id', async (req, res) => {
   return res.json({ ok: true });
 });
 
+/**
+ * Normalise a projects row to the legacy board shape the frontend expects.
+ * Keeps `title` AND adds `name` alias; `brand_id` AND adds `sparti_brand_id` alias.
+ */
+function normaliseProject(p) {
+  return {
+    id: p.id,
+    name: p.title,           // legacy alias
+    title: p.title,
+    description: p.description,
+    status: p.is_active === false ? 'archived' : (p.status || 'active'),
+    brand_id: p.brand_id,
+    sparti_brand_id: p.brand_id, // legacy alias
+    is_active: p.is_active,
+    created_at: p.created_at,
+    updated_at: p.updated_at,
+  };
+}
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
+// mc_tasks.project_id now references projects(id) (unified via migration).
+// URL shape preserved: /api/boards/:boardId/tasks — boardId IS the project_id.
 
 router.get('/api/boards/:boardId/tasks', async (req, res) => {
   const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
 
-  // Verify board belongs to user
-  const { data: board } = await supabase
-    .from('mc_boards')
+  // Verify the project belongs to the user (replaces old mc_boards ownership check)
+  const { data: project } = await supabase
+    .from('projects')
     .select('id')
     .eq('id', req.params.boardId)
     .eq('user_id', req.user.id)
     .maybeSingle();
-  if (!board) return res.status(404).json({ error: 'Board not found' });
+  if (!project) return res.status(404).json({ error: 'Board not found' });
 
   const { data, error } = await supabase
     .from('mc_tasks')
-    .select('id,board_id,title,description,status,column_status,priority,assignee_agent,tags,created_at')
-    .eq('board_id', req.params.boardId)
+    .select('id,project_id,title,description,status,column_status,priority,assignee_agent,tags,created_at')
+    .eq('project_id', req.params.boardId)
     .eq('user_id', req.user.id)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ tasks: data || [] });
+  // Add board_id alias for frontend compatibility
+  const tasks = (data || []).map(t => ({ ...t, board_id: t.project_id }));
+  return res.json({ tasks });
 });
 
 router.post('/api/boards/:boardId/tasks', async (req, res) => {
@@ -187,19 +222,19 @@ router.post('/api/boards/:boardId/tasks', async (req, res) => {
   const { title, description, status, column_status, priority, assignee_agent, tags } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'title is required' });
 
-  // Verify board belongs to user
-  const { data: board } = await supabase
-    .from('mc_boards')
+  // Verify project ownership
+  const { data: project } = await supabase
+    .from('projects')
     .select('id')
     .eq('id', req.params.boardId)
     .eq('user_id', req.user.id)
     .maybeSingle();
-  if (!board) return res.status(404).json({ error: 'Board not found' });
+  if (!project) return res.status(404).json({ error: 'Board not found' });
 
   const { data, error } = await supabase
     .from('mc_tasks')
     .insert({
-      board_id: req.params.boardId,
+      project_id: req.params.boardId,
       user_id: req.user.id,
       title: String(title).trim(),
       description: description ? String(description).trim() : null,
@@ -209,12 +244,12 @@ router.post('/api/boards/:boardId/tasks', async (req, res) => {
       assignee_agent: assignee_agent ? String(assignee_agent).trim() : null,
       tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
     })
-    .select('id,board_id,title,description,status,column_status,priority,assignee_agent,tags,created_at')
+    .select('id,project_id,title,description,status,column_status,priority,assignee_agent,tags,created_at')
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
-  emitAudit(supabase, { userId: req.user.id, eventType: 'task.created', actor: req.user.email || req.user.id, payload: { taskId: data.id, title: data.title, boardId: req.params.boardId } });
-  return res.status(201).json({ task: data });
+  emitAudit(supabase, { userId: req.user.id, eventType: 'task.created', actor: req.user.email || req.user.id, payload: { taskId: data.id, title: data.title, projectId: req.params.boardId } });
+  return res.status(201).json({ task: { ...data, board_id: data.project_id } });
 });
 
 router.patch('/api/tasks/:id', async (req, res) => {
@@ -234,13 +269,13 @@ router.patch('/api/tasks/:id', async (req, res) => {
     .update(updates)
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
-    .select('id,board_id,title,description,status,column_status,priority,assignee_agent,tags,created_at')
+    .select('id,project_id,title,description,status,column_status,priority,assignee_agent,tags,created_at')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Task not found' });
 
   emitAudit(supabase, { userId: req.user.id, eventType: 'task.updated', actor: req.user.email || req.user.id, payload: { taskId: data.id, updates } });
-  return res.json({ task: data });
+  return res.json({ task: { ...data, board_id: data.project_id } });
 });
 
 router.delete('/api/tasks/:id', async (req, res) => {
@@ -783,6 +818,73 @@ router.get('/api/live-feed', async (req, res) => {
     .limit(limit);
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ events: data || [] });
+});
+
+// ── History (bot sessions / chat history across all brands) ──────────────────
+
+router.get('/api/history', async (req, res) => {
+  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const brandId = req.query.brand_id ? String(req.query.brand_id) : null;
+
+  let query = supabase
+    .from('bot_sessions')
+    .select('id,platform,thread_id,brand_id,instance_id,metadata,last_message_at,message_count,created_at')
+    .eq('user_id', req.user.id)
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+
+  if (brandId) query = query.eq('brand_id', brandId);
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ sessions: data || [] });
+});
+
+// ── Brands (list from Sparti brands table) ───────────────────────────────────
+
+router.get('/api/brands', async (req, res) => {
+  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const { data, error } = await supabase
+    .from('brands')
+    .select('id,name,description,logo_url,website,industry,created_at,is_active')
+    .eq('user_id', req.user.id)
+    .order('name', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ brands: data || [] });
+});
+
+// ── Logs (token usage history from global_ai_token_usage) ────────────────────
+
+router.get('/api/logs', async (req, res) => {
+  const supabase = createSupabaseClient({ accessToken: req.supabaseAccessToken });
+  const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const days = Math.min(parseInt(req.query.days, 10) || 30, 90);
+  const since = new Date(Date.now() - days * 86400 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from('global_ai_token_usage')
+    .select('id,model,provider,input_tokens,output_tokens,total_tokens,estimated_cost_usd,session_id,instance_id,metadata,created_at')
+    .eq('user_id', req.user.id)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Aggregate totals for the summary row
+  const rows = data || [];
+  const totals = rows.reduce((acc, r) => {
+    acc.input_tokens += r.input_tokens || 0;
+    acc.output_tokens += r.output_tokens || 0;
+    acc.total_tokens += r.total_tokens || 0;
+    acc.estimated_cost_usd += Number(r.estimated_cost_usd) || 0;
+    return acc;
+  }, { input_tokens: 0, output_tokens: 0, total_tokens: 0, estimated_cost_usd: 0 });
+
+  return res.json({ logs: rows, totals, days });
 });
 
 export default router;

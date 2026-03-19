@@ -590,6 +590,69 @@ app.post('/api/mc/events', express.json(), async (req, res) => {
   return res.json({ ok: true });
 });
 
+// Usage push — bot records per-request token usage into global_ai_token_usage.
+// Protected by SETUP_PASSWORD Bearer token.
+// Body: { model, provider?, request_id?, input_tokens, output_tokens, total_tokens?,
+//         estimated_cost_usd?, source?, session_id?, instance_id? }
+// user_id resolved from: x-user-id header → SPARTI_USER_ID env var → null (stored without user scope).
+app.post('/api/usage', express.json(), async (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const SETUP_PASSWORD = process.env.SETUP_PASSWORD || '';
+  if (!SETUP_PASSWORD || token !== SETUP_PASSWORD) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return res.status(503).json({ error: 'SUPABASE_SERVICE_ROLE_KEY not set' });
+  }
+
+  const {
+    model,
+    provider = 'openclaw',
+    request_id,
+    input_tokens = 0,
+    output_tokens = 0,
+    total_tokens,
+    estimated_cost_usd = 0,
+    source,
+    session_id,
+    instance_id,
+  } = req.body || {};
+
+  if (!model) return res.status(400).json({ error: 'model is required' });
+
+  const userId =
+    (req.headers['x-user-id'] || '').toString().trim() ||
+    getOptionalEnv('SPARTI_USER_ID') ||
+    null;
+
+  const adminSb = createSupabaseAdminClient();
+  const { error } = await adminSb.from('global_ai_token_usage').insert({
+    provider: String(provider || 'openclaw'),
+    model: String(model),
+    request_id: request_id
+      ? String(request_id)
+      : `openclaw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    input_tokens: Math.max(0, Number(input_tokens) || 0),
+    output_tokens: Math.max(0, Number(output_tokens) || 0),
+    total_tokens:
+      total_tokens != null
+        ? Math.max(0, Number(total_tokens))
+        : Math.max(0, (Number(input_tokens) || 0) + (Number(output_tokens) || 0)),
+    estimated_cost_usd: Math.max(0, Number(estimated_cost_usd) || 0),
+    user_id: userId || null,
+    metadata: {
+      source: source || 'openclaw',
+      session_id: session_id || null,
+      instance_id: instance_id || null,
+    },
+  });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
+});
+
 // Sparti Context — brands, agents, projects, copilot tools, agent launch, edge fn invocation
 app.use('/api/sparti', spartiContextRouter);
 
@@ -2445,6 +2508,39 @@ app.get('/lite/api/usage', wrapperAuth, async (req, res) => {
         }
       }
     } catch { /* CLI not available */ }
+  }
+
+  // Supabase fallback: read from global_ai_token_usage when gateway and CLI are unavailable.
+  // Aggregates all rows for this user in the last 7 days, grouped by calendar date.
+  // user_id resolved from SPARTI_USER_ID env var (set in Railway vars) or req.user if present.
+  if (!rawDays) {
+    const userId = getOptionalEnv('SPARTI_USER_ID') || req.user?.id || null;
+    if (userId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        const adminSb = createSupabaseAdminClient();
+        const startTs = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const { data } = await adminSb
+          .from('global_ai_token_usage')
+          .select('created_at, input_tokens, output_tokens, total_tokens, estimated_cost_usd')
+          .eq('user_id', userId)
+          .gte('created_at', startTs)
+          .order('created_at', { ascending: true });
+        if (data?.length > 0) {
+          const byDate = {};
+          for (const row of data) {
+            const date = row.created_at.split('T')[0];
+            if (!byDate[date]) {
+              byDate[date] = { date, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0, cost: 0 };
+            }
+            byDate[date].input += row.input_tokens || 0;
+            byDate[date].output += row.output_tokens || 0;
+            byDate[date].total += row.total_tokens || 0;
+            byDate[date].cost += Number(row.estimated_cost_usd || 0);
+          }
+          rawDays = Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+        }
+      } catch { /* DB not available */ }
+    }
   }
 
   if (!rawDays || rawDays.length === 0) {
