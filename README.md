@@ -289,6 +289,7 @@ Install skills from two sources:
 | `PORT` | External port (Railway overrides this) | `8080` | No |
 | `SEARXNG_URL` | SearXNG instance URL — the `searxng-local` skill is always enabled for all accounts; set this to point it at your SearXNG service | — | No |
 | `COMPOSIO_API_KEY` | Composio API key — enables connector OAuth flows (Google, GitHub, Slack, etc.) | — | No |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key — required for the Composio OAuth callback to persist connections (bypasses RLS). Also used for audit events and app_settings lookups. | — | No |
 
 ### Railway Volume Setup
 
@@ -557,7 +558,7 @@ Connection state is persisted in the `composio_connections` Supabase table (migr
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/composio/connect-link` | Generate a Composio OAuth Connect Link from inside the bot. Body: `{ toolkitKey, origin? }`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
+| POST | `/api/composio/connect-link` | Generate a Composio OAuth Connect Link from inside the bot. Body: `{ toolkitKey, userId?, returnTo?, origin? }`. Pass a real Supabase `userId` for per-user linking (falls back to `bot-shared`); `returnTo` defaults to `/mission-control#integrations`. Returns `{ redirectUrl }`. Protected by `SETUP_PASSWORD` Bearer token — no Supabase session needed. |
 | POST | `/api/composio/connect-api-key` | Connect a service using an API key, Bearer token, or Basic auth — no OAuth redirect needed. Body: `{ toolkitKey, credentials: { api_key?, token?, username?, password? }, authScheme? }`. Returns `{ ok: true, connectedAccountId }`. Connection is immediately active. Protected by `SETUP_PASSWORD` Bearer token. Users can paste the key in chat (e.g. "connect productive.io with api: xyz"); the bot calls this endpoint and confirms without echoing the key. |
 
 ### Sparti Context (Supabase auth required)
@@ -755,6 +756,17 @@ make test-local    # Local build tests
 
 - Use the dashboard's pairing approval feature at `/lite`
 - Ensure the gateway is running and accessible
+
+### Composio OAuth shows "failed or was cancelled"
+
+The `connect=failed` redirect is triggered by one of these callback failure branches. Check Railway logs for the specific reason code:
+
+| Reason in logs | Cause | Fix |
+|----------------|-------|-----|
+| `oauth_not_success` | User cancelled OAuth or Composio returned non-success status / missing `connected_account_id`. | Complete OAuth; verify the toolkit is configured in the Composio dashboard. |
+| `no_user` | No `composio_cb` cookie and no valid `cbt` token and no live session. | Start the flow from Dashboard or Mission Control (sets the cookie). For bot flow, pass a real `userId`. |
+| `no_service_role` | `SUPABASE_SERVICE_ROLE_KEY` not set. | Set it in Railway env vars — the callback needs it to write to `composio_connections` (RLS bypasses anonymous inserts). |
+| `db_error` | `composio_connections` table missing or constraint error. | Run both Composio migrations (`20260318`, `20260319`). |
 
 ### Viewing Logs
 

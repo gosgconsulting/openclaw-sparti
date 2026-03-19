@@ -6,6 +6,8 @@ Active tasks, next steps, blockers, and verification notes.
 
 ## Now
 
+- **Composio auth audit and callback diagnostics (2026-03-19)** — Full audit of the Composio OAuth system. Callback now returns a machine-readable connect_reason in the redirect hash (oauth_not_success, no_user, no_service_role, db_error) so the UI shows a specific error instead of the generic message. Each failure branch logs a stable reason code with context. DB errors now redirect to failed instead of silently succeeding. Bot connect-link now requires userId (returns 400 if missing). Bot initiated-row insert uses plain INSERT instead of upsert with the stale constraint. Connect, reconnect, and bot routes log origin and returnTo. Docs: docs/PLAN.md Composio auth system section rewritten; docs/README.md module map updated; README.md bot API docs expanded; troubleshooting section added; API key literal removed from TODO.
+
 - **Composio “linked” to dashboard (2026-03-19)** — Plan in `docs/PLAN.md` ("Composio linked to dashboard"). (1) Callback now requires `SUPABASE_SERVICE_ROLE_KEY` and redirects to failed with a clear log if missing, so the connection is only persisted when the server can write. (2) Dashboard and Mission Control force-reload the connectors list when landing with `connect=success` in the hash so the new connection appears immediately. (3) README Connectors section lists prerequisites (migrations, service role key, Composio key, start flow from app). (4) TODO Pending adds troubleshooting note for "OAuth succeeds in Composio but not linked".
 
 - **Composio OAuth redirect flow (Clawdi-style) (2026-03-19)** — Plan in `docs/PLAN.md` (section "Composio OAuth redirect flow (Clawdi-style)"). Implemented: (1) Callback accepts both `connected_account_id` (snake_case) and `connectedAccountId` (camelCase) from Composio so redirect works regardless of param name. (2) Added `GET /connectors` (auth required) — redirects to `/dashboard#tab=connectors` with `connect=success`/`failed` from query `status`; use `returnTo=/connectors` when initiating connect for Clawdi-style final URL `/connectors?status=success&connected_account_id=ca_xxx`. (3) `resolveCallbackReturnUrl` supports `returnTo=/connectors` and passes `connected_account_id` in query for the landing page. README Connectors section updated.
@@ -18,7 +20,7 @@ Active tasks, next steps, blockers, and verification notes.
 
 - **Mission Control 500 on page load fixed (2026-03-19)** — `getMissionControlPageHTML` was crashing at render time with `ReferenceError: p is not defined`. Two unescaped `${p.slug}` interpolations in the Prompts table template (lines 2068, 2076) were being evaluated server-side instead of client-side. Fixed by escaping both to `\${esc(p.slug)}`. Verified with `node --eval` import test.
 
-- **Composio auth configs catalog (2026-03-19)** — Connectors tab now dynamically built from the 30 auth configs in the Composio account. No more hardcoded 3-connector list. New API key `ak_AFQDM9XqtOvTxTPab9lQ` confirmed working. See Done section.
+- **Composio auth configs catalog (2026-03-19)** — Connectors tab now dynamically built from the 30 auth configs in the Composio account. No more hardcoded 3-connector list. See Done section.
 
 
 
@@ -121,7 +123,7 @@ Active tasks, next steps, blockers, and verification notes.
   - `src/integrations/composio.js` — Added `listComposioAuthConfigs()` using `GET /api/v3/auth_configs`. Returns only the toolkits actually configured in the account (vs. the global catalog of thousands).
   - `src/server.js` — Replaced hardcoded 3-connector list with dynamic build from auth configs. Added `TOOLKIT_META` map for display names/descriptions for all 43 configured toolkits. Removed unused `pickAppByCandidates`, `normalizeKey`, and `listComposioApps` import. Connectors now sort recommended-first then alphabetically.
   - `skills/composio-connect/SKILL.md` — Updated auth type table to match all 43 auth configs in the account.
-  - API key `ak_AFQDM9XqtOvTxTPab9lQ` verified working — returns all 43 auth configs. Key is read from `COMPOSIO_API_KEY` Railway env var (Supabase `app_settings` table does not exist).
+  - API key verified working — returns all 43 auth configs. Key is read from `COMPOSIO_API_KEY` Railway env var (Supabase `app_settings` table does not exist).
 
 - **Composio API-key connect flow (2026-03-19):**
   - `src/integrations/composio.js` — Added `connectWithApiKey(userId, toolkitKey, credentials, authScheme, composioApiKey)`. Supports `API_KEY`, `BEARER_TOKEN`, and `BASIC` auth schemes via `AuthScheme` helpers from `@composio/core`. Connection is immediately active — no redirect.

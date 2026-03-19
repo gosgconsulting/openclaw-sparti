@@ -54,7 +54,7 @@ Request → Express 5 (server.js)
 | `src/proxy.js` | Reverse proxy to gateway (HTTP + WS upgrade). |
 | `src/terminal.js` | WebSocket PTY terminal (xterm.js). |
 | `src/channels.js` | Channel definitions (17), icons, config builders. |
-| `src/integrations/composio.js` | Composio app listing (server-side). |
+| `src/integrations/composio.js` | Composio integration layer (server-side): OAuth link generation (`generateConnectLink`, `initiateComposioConnection`), auth config listing (`listComposioAuthConfigs`), connected account queries (`listConnectedAccountsV3`), disconnect (`disconnectComposioAccount`), API-key connect (`connectWithApiKey`). |
 | `src/schema/index.js` | Schema registry, validate, migrate, getAllSchemas. |
 | `src/schema/validate.js` | Ajv wrapper. |
 | `src/schema/migrate.js` | Legacy config migration. |

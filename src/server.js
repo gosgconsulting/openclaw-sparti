@@ -1140,30 +1140,29 @@ function resolveReturnTo(req) {
  * @param {'success'|'failed'} outcome
  * @param {string} [toolkitKey] - Toolkit slug, used for /connected page display name
  * @param {string} [connectedAccountId] - Composio connected_account_id; used when returnTo is /connectors (Clawdi-style)
+ * @param {string} [reason] - Machine-readable failure reason (e.g. 'oauth_not_success', 'no_user', 'no_service_role')
  */
-function resolveCallbackReturnUrl(returnTo, outcome, toolkitKey, connectedAccountId) {
-  const suffix = outcome === 'success' ? '&connect=success' : '&connect=failed';
-  // Only allow same-origin relative paths starting with /
+function resolveCallbackReturnUrl(returnTo, outcome, toolkitKey, connectedAccountId, reason) {
+  const reasonSuffix = (outcome !== 'success' && reason) ? `&connect_reason=${encodeURIComponent(reason)}` : '';
+  const suffix = (outcome === 'success' ? '&connect=success' : '&connect=failed') + reasonSuffix;
   if (returnTo && /^\/[a-zA-Z0-9/_#?=-]/.test(returnTo)) {
-    // /connected is a special standalone page — just pass toolkit as query param on success
     if (returnTo === '/connected' || returnTo.startsWith('/connected?')) {
       if (outcome === 'success') {
         const tk = toolkitKey ? `?toolkit=${encodeURIComponent(toolkitKey)}` : '';
         return `/connected${tk}`;
       }
-      return '/dashboard#tab=connectors&connect=failed';
+      return '/dashboard#tab=connectors' + suffix;
     }
-    // Clawdi-style: /connectors?status=success&connected_account_id=xxx — GET /connectors will redirect to dashboard with hash
     if (returnTo === '/connectors' || returnTo.startsWith('/connectors?')) {
       const params = new URLSearchParams({ status: outcome });
       if (outcome === 'success' && connectedAccountId) params.set('connected_account_id', connectedAccountId);
+      if (outcome !== 'success' && reason) params.set('connect_reason', reason);
       return `/connectors?${params.toString()}`;
     }
-    // Append connect outcome to the hash if the path contains #, else append as hash
     if (returnTo.includes('#')) {
       return returnTo + suffix;
     }
-    return returnTo + '#connect=' + outcome;
+    return returnTo + '#connect=' + outcome + reasonSuffix;
   }
   return '/dashboard#tab=connectors' + suffix;
 }
@@ -1227,10 +1226,8 @@ app.post('/dashboard/connectors/:key/connect', requireUser(), async (req, res) =
 
   try {
     const origin = getRequestOrigin(req);
+    console.log(`[connectors/connect] toolkit=${toolkitKey}, userId=${userId}, origin=${origin}, returnTo=${returnTo || '(default)'}`);
     const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin, composioApiKey);
-
-    // No DB write here — callback will insert/upsert by (user_id, toolkit_key, connected_account_id).
-    // Multiple accounts per toolkit are supported.
 
     // Set a short-lived cookie so the callback can identify the user,
     // know where to redirect (returnTo), and optionally restore the Supabase session
@@ -1292,13 +1289,14 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
   const returnTo = cbCookie?.returnTo || cbToken?.returnTo || null;
 
   if (status !== 'success' || !connectedAccountIdResolved || !toolkitKey) {
-    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
+    console.error(`[connectors/callback] oauth_not_success — status=${status}, connectedAccountId=${connectedAccountIdResolved || '(none)'}, toolkit=${toolkitKey || '(none)'}, hasCookie=${!!cbCookie}, hasCbt=${!!cbToken}`);
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey, null, 'oauth_not_success'));
   }
 
   // Resolve userId: cookie → token → live session.
   let userId = cbCookie?.userId || cbToken?.userId || null;
+  const userSource = cbCookie?.userId ? 'cookie' : (cbToken?.userId ? 'cbt' : null);
   if (!userId) {
-    // Try to read from live session as a last resort.
     try {
       const { accessToken } = getSupabaseTokensFromRequest(req);
       if (accessToken) {
@@ -1310,19 +1308,17 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
   }
 
   if (!userId) {
-    console.error('[connectors/callback] could not identify user — no cookie and no session');
-    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
+    console.error(`[connectors/callback] no_user — toolkit=${toolkitKey}, hasCookie=${!!cbCookie}, hasCbt=${!!cbToken}, cbtRaw=${typeof cbt === 'string' ? 'present' : 'absent'}`);
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey, null, 'no_user'));
   }
 
-  // Service-role is required: callback has no user session (Composio redirect); RLS would block insert.
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.error('[connectors/callback] SUPABASE_SERVICE_ROLE_KEY not set — cannot persist connection (RLS would block). Set it so the callback can upsert composio_connections.');
-    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey));
+    console.error(`[connectors/callback] no_service_role — toolkit=${toolkitKey}, userId=${userId}. Set SUPABASE_SERVICE_ROLE_KEY so the callback can upsert composio_connections.`);
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey, null, 'no_service_role'));
   }
 
   try {
     const supabase = createSupabaseAdminClient();
-    // Insert or update by (user_id, toolkit_key, connected_account_id) to support multiple accounts per toolkit.
     const { error: dbErr } = await supabase
       .from('composio_connections')
       .upsert(
@@ -1335,10 +1331,12 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
         { onConflict: 'user_id,toolkit_key,connected_account_id' }
       );
     if (dbErr) {
-      console.error('[connectors/callback] db upsert error:', dbErr.message);
+      console.error(`[connectors/callback] db_error — toolkit=${toolkitKey}, userId=${userId}, error=${dbErr.message}`);
+      return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey, null, 'db_error'));
     }
   } catch (err) {
-    console.error('[connectors/callback] error:', err.message);
+    console.error(`[connectors/callback] db_error — toolkit=${toolkitKey}, userId=${userId}, error=${err.message}`);
+    return res.redirect(resolveCallbackReturnUrl(returnTo, 'failed', toolkitKey, null, 'db_error'));
   }
 
   // Restore Supabase session so the user is not asked to log in again after OAuth.
@@ -1359,6 +1357,7 @@ app.get('/dashboard/connectors/callback', async (req, res) => {
     }
   }
 
+  console.log(`[connectors/callback] success — toolkit=${toolkitKey}, userId=${userId}, source=${userSource || 'session'}, connectedAccountId=${connectedAccountIdResolved}`);
   return res.redirect(resolveCallbackReturnUrl(returnTo, 'success', toolkitKey, connectedAccountIdResolved));
 });
 
@@ -1414,7 +1413,10 @@ app.get('/connected', (req, res) => {
 // This route requires auth and redirects to /dashboard#tab=connectors with &connect=success or &connect=failed.
 app.get('/connectors', requireUser(), (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : '';
-  const hash = status === 'success' ? 'tab=connectors&connect=success' : status === 'failed' ? 'tab=connectors&connect=failed' : 'tab=connectors';
+  const connectReason = typeof req.query.connect_reason === 'string' ? req.query.connect_reason : '';
+  let hash = 'tab=connectors';
+  if (status === 'success') hash += '&connect=success';
+  else if (status === 'failed') hash += '&connect=failed' + (connectReason ? `&connect_reason=${encodeURIComponent(connectReason)}` : '');
   res.redirect(302, `/dashboard#${hash}`);
 });
 
@@ -1428,14 +1430,12 @@ app.post('/dashboard/connectors/:key/reconnect', requireUser(), async (req, res)
     return res.status(503).json({ error: 'Composio is not configured on this server. Set COMPOSIO_API_KEY or add app_settings(key=\'composio\').' });
   }
 
+  const returnTo = resolveReturnTo(req);
+
   try {
     const origin = getRequestOrigin(req);
+    console.log(`[connectors/reconnect] toolkit=${toolkitKey}, userId=${userId}, origin=${origin}, returnTo=${returnTo || '(default)'}`);
     const { redirectUrl, connectionRequestId } = await generateConnectLink(userId, toolkitKey, origin, composioApiKey);
-
-    // No DB write — callback will upsert by (user_id, toolkit_key, connected_account_id).
-
-    // Same cookie as connect — callback needs it to identify the user, return them to the right page, and restore session.
-    const returnTo = resolveReturnTo(req);
     const { refreshToken } = getSupabaseTokensFromRequest(req);
     const refreshEnc = refreshToken ? encryptRefreshForCallback(refreshToken) : null;
     setComposioCallbackCookie(res, userId, toolkitKey, returnTo, refreshEnc);
@@ -1620,10 +1620,12 @@ app.post('/api/composio/connect-link', async (req, res) => {
     return res.status(400).json({ error: 'toolkitKey is required' });
   }
 
-  // userId: real Supabase user UUID. Falls back to 'bot-shared' for legacy callers.
   const userId = typeof req.body?.userId === 'string' && req.body.userId.trim()
     ? req.body.userId.trim()
-    : 'bot-shared';
+    : '';
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required. Pass the Supabase user UUID so the connection is linked to the user\'s account.' });
+  }
 
   // returnTo: where to redirect after OAuth. Defaults to Mission Control integrations panel.
   const returnTo = typeof req.body?.returnTo === 'string' && /^\/[a-zA-Z0-9/_#-]/.test(req.body.returnTo)
@@ -1640,26 +1642,22 @@ app.post('/api/composio/connect-link', async (req, res) => {
       ? req.body.origin.trim()
       : getRequestOrigin(req);
 
-    // Embed a signed token in the callbackUrl so the callback can identify the user
-    // without a browser cookie (the bot has no browser session to set cookies on).
     const cbToken = makeCallbackToken(userId, toolkitKey, returnTo);
     const callbackUrl = `${origin}/dashboard/connectors/callback?toolkit=${encodeURIComponent(toolkitKey)}&cbt=${encodeURIComponent(cbToken)}`;
+    console.log(`[api/composio/connect-link] toolkit=${toolkitKey}, userId=${userId}, origin=${origin}, returnTo=${returnTo}`);
     const { redirectUrl, connectionRequestId } = await initiateComposioConnection(userId, toolkitKey, callbackUrl, composioApiKey);
 
     // Save initiated state so the connector list shows "pending" while the user completes OAuth.
-    if (userId !== 'bot-shared') {
-      try {
-        const adminSb = process.env.SUPABASE_SERVICE_ROLE_KEY
-          ? createSupabaseAdminClient()
-          : createSupabaseClient();
-        await adminSb.from('composio_connections').upsert(
-          { user_id: userId, toolkit_key: toolkitKey, connection_request_id: connectionRequestId, connected_account_id: null, status: 'initiated' },
-          { onConflict: 'user_id,toolkit_key' }
-        );
-      } catch (dbErr) {
-        console.error('[api/composio/connect-link] db upsert error:', dbErr.message);
-        // Non-fatal — still return the link.
-      }
+    // Non-fatal: if the insert fails (e.g. row already exists), we still return the link.
+    try {
+      const adminSb = process.env.SUPABASE_SERVICE_ROLE_KEY
+        ? createSupabaseAdminClient()
+        : createSupabaseClient();
+      await adminSb.from('composio_connections').insert(
+        { user_id: userId, toolkit_key: toolkitKey, connection_request_id: connectionRequestId, connected_account_id: null, status: 'initiated' }
+      );
+    } catch (dbErr) {
+      console.error('[api/composio/connect-link] initiated row insert error (non-fatal):', dbErr.message);
     }
 
     return res.json({ redirectUrl });

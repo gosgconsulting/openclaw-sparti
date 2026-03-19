@@ -268,47 +268,87 @@ Emit from key server actions:
 
 ---
 
-## Composio OAuth redirect flow (Clawdi-style)
+## Composio Auth System — Architecture and Flow
 
-### Reference flow (working on Clawdi)
+### Overview
 
-1. User starts connect from app (e.g. Connectors tab).
-2. App redirects to Composio Connect Link (`platform.composio.dev/link/lk_...`).
-3. User completes OAuth on provider (e.g. Google consent).
-4. Composio shows its own success page (`platform.composio.dev/link/...?status=success&connectedAccountId=ca_xxx&appName=googlesuper`), then redirects to the **app callback URL** (configured when creating the link).
-5. App callback receives GET with `status=success` and `connected_account_id` (or `connectedAccountId`); app persists the connection and redirects to the final landing page.
-6. Clawdi final URL: `https://www.clawdi.ai/connectors?status=success&connected_account_id=ca_xxx` — a dedicated `/connectors` page with query params for success state.
+Two separate flows share one callback (`GET /dashboard/connectors/callback`), one integration module (`src/integrations/composio.js`), and one persistence table (`composio_connections`).
 
-### Current openclaw-sparti flow
+- **Browser flow** — User clicks Connect in Dashboard or Mission Control. Server sets a `composio_cb` cookie, calls `generateConnectLink()`, returns the Composio redirect URL.
+- **Bot flow** — Bot calls `POST /api/composio/connect-link` with `SETUP_PASSWORD` Bearer. Server signs an HMAC `cbt` token into the callback URL instead of a cookie.
 
-| Step | Implementation |
-|------|----------------|
-| 1–3 | Same: Connect button → Composio link → OAuth on provider. |
-| 4 | Composio redirects to `GET /dashboard/connectors/callback?status=success&connected_account_id=ca_xxx&toolkit=...` (and optionally `cbt=` for bot flow). Callback is **not** behind `requireUser()` so the redirect from Composio works (no session required). |
-| 5 | Callback reads user from `composio_cb` cookie (browser) or `cbt` token (bot), upserts `composio_connections`, restores Supabase session, then redirects to `returnTo` with hash `&connect=success` or `&connect=failed`. |
-| 6 | Final URL today: `/dashboard#tab=connectors&connect=success` or `/mission-control#integrations&connect=success` or `/connected?toolkit=...` (bot). No dedicated `/connectors` route. |
+### Browser flow (step by step)
 
-### Findings
+1. **Initiation** — User clicks Connect on a connector card.
+   - UI calls `POST /dashboard/connectors/:key/connect` (or `/reconnect`).
+   - Server resolves `returnTo` from body or Referer, reads the Supabase refresh token from cookies, encrypts it (AES-256-GCM, key derived from `SETUP_PASSWORD`).
+   - Server calls `generateConnectLink(userId, toolkitKey, origin, apiKey)` → `initiateComposioConnection()` → Composio SDK `session.authorize()`.
+   - Server sets `composio_cb` cookie: `{ userId, toolkitKey, returnTo, ts, r (encrypted refresh) }`, base64-encoded, `httpOnly`, `sameSite=lax`, `path=/dashboard/connectors/callback`, 15-min TTL.
+   - Server optionally sets `oc_return` cookie (path `/`, 20 min) so if the user lands on `/auth` after OAuth, the redirect preserves the hash.
+   - Server returns `{ redirectUrl }`. Browser navigates to Composio's hosted OAuth page.
 
-- **Callback URL**: Built in `generateConnectLink()` and `POST /api/composio/connect-link` as `${origin}/dashboard/connectors/callback?toolkit=...` (and `&cbt=` for bot). Composio appends `status` and `connected_account_id` (docs say snake_case; their intermediate page may show camelCase).
-- **User resolution**: Cookie (browser) → signed `cbt` token (bot) → live Supabase session. Session restore from encrypted refresh token in cookie avoids second login after OAuth.
-- **returnTo**: From POST body or Referer; validated same-origin; stored in cookie/token; used in `resolveCallbackReturnUrl()` to build final redirect.
+2. **OAuth** — User completes (or cancels) OAuth on the provider. Composio redirects to the callback URL with query params `status`, `connected_account_id` (or `connectedAccountId`), `toolkit`.
 
-### Duplicate / reuse
+3. **Callback** — `GET /dashboard/connectors/callback` (no `requireUser()`).
+   - Reads `composio_cb` cookie → resolves `userId`, `toolkitKey`, `returnTo`, encrypted refresh.
+   - Falls back to `cbt` query token (bot flow) → falls back to live Supabase session.
+   - Clears the callback cookie.
+   - **Failure gates** (any one triggers redirect with `connect=failed`):
+     - `status !== 'success'` or missing `connected_account_id` or missing `toolkitKey` → reason: `oauth_not_success`
+     - No `userId` resolved from cookie, token, or session → reason: `no_user`
+     - `SUPABASE_SERVICE_ROLE_KEY` not set → reason: `no_service_role`
+   - On success: uses service-role Supabase client to upsert `composio_connections` by `(user_id, toolkit_key, connected_account_id)`.
+   - Restores Supabase session from decrypted refresh token so user is not asked to log in again.
+   - Redirects to `resolveCallbackReturnUrl(returnTo, 'success'|'failed', toolkitKey, connectedAccountId)`.
 
-- Do **not** add a second callback URL or a second Composio integration path. Single callback: `/dashboard/connectors/callback`. Single integration: `src/integrations/composio.js`.
+4. **Landing** — Browser lands on the return URL with `connect=success` or `connect=failed` in the hash. Dashboard/Mission Control JS detects the hash, shows a flash toast or error, and force-reloads the connectors list.
 
-### Execution plan
+### Bot flow (step by step)
 
-1. **Callback param robustness** — Accept both `connected_account_id` (snake_case) and `connectedAccountId` (camelCase) from Composio redirect so the callback works regardless of which param Composio sends. Use the first present for DB upsert.
-2. **Optional: Clawdi-style `/connectors` landing** — Add `GET /connectors` (auth required) that redirects to `/dashboard#tab=connectors`, and if query has `status=success` or `status=failed`, append `&connect=success` or `&connect=failed` to the hash. Allow `returnTo=/connectors` so the callback can redirect to `/connectors?status=success&connected_account_id=xxx`; then `/connectors` redirects to `/dashboard#tab=connectors&connect=success` and the dashboard shows the flash. This gives a Clawdi-style final URL without duplicating the connectors UI.
-3. **Docs** — README and TODO already describe the flow; add note that `/connectors` is an alias for dashboard connectors tab when using Clawdi-style returnTo.
+1. **Initiation** — Bot calls `POST /api/composio/connect-link` with Bearer `SETUP_PASSWORD`.
+   - Body: `{ toolkitKey, userId (real Supabase UUID), returnTo ("/connected"), origin? }`.
+   - Server signs an HMAC-SHA256 `cbt` token: `{ userId, toolkitKey, ts, sig, returnTo }`, 20-min TTL.
+   - Callback URL: `${origin}/dashboard/connectors/callback?toolkit=...&cbt=...`.
+   - Calls `initiateComposioConnection()` directly (not `generateConnectLink()`).
+   - Returns `{ redirectUrl }`. Bot sends the link to the user.
 
-### Verification
+2. **OAuth** — User opens the link, completes OAuth. Composio redirects to the callback URL.
 
-- Click Connect on a connector (e.g. Google Super) → complete OAuth → land on dashboard or Mission Control with "Connector linked successfully" and connectors list updated.
-- Bot: "connect Google with composio" → open link → complete OAuth → land on `/connected` or configured returnTo.
-- If `/connectors` is added: set returnTo to `/connectors`, complete OAuth → land on `/connectors?status=success&...` → redirect to `/dashboard#tab=connectors&connect=success` and flash shown.
+3. **Callback** — Same handler. No cookie available; `cbt` token is the identity source.
+
+4. **Landing** — User lands on `/connected` (clean standalone page) or the configured `returnTo`.
+
+### API-key flow (no OAuth)
+
+`POST /api/composio/connect-api-key` with Bearer `SETUP_PASSWORD`. Body: `{ toolkitKey, credentials, authScheme? }`. Connection is immediately active — no redirect. Returns `{ ok: true, connectedAccountId }`.
+
+### Key files
+
+| File | Role in auth flow |
+|------|-------------------|
+| `src/server.js` | Routes: connect, reconnect, disconnect, callback, bot connect-link, bot connect-api-key. Cookie/token helpers: `setComposioCallbackCookie`, `readComposioCallbackCookie`, `makeCallbackToken`, `verifyCallbackToken`, `resolveReturnTo`, `resolveCallbackReturnUrl`. Session restore: `encryptRefreshForCallback`, `decryptRefreshFromCallback`. |
+| `src/integrations/composio.js` | Composio SDK wrapper: `initiateComposioConnection`, `generateConnectLink`, `listComposioAuthConfigs`, `listConnectedAccountsV3`, `disconnectComposioAccount`, `connectWithApiKey`. |
+| `src/auth-supabase.js` | `requireUser()`, `getSupabaseTokensFromRequest`, `setSupabaseAuthCookies`, `OC_RETURN_COOKIE`. Cookie settings: `httpOnly`, `sameSite=lax`, `secure` in prod. |
+| `src/dashboard-page.js` | Client-side: `connect=success`/`connect=failed` hash detection, flash toast, connectors reload. |
+| `src/mission-control-page.js` | Client-side: same hash detection, auto-opens Integrations > Connectors tab. |
+| `supabase/migrations/20260318_composio_connections.sql` | `composio_connections` table with RLS. |
+| `supabase/migrations/20260319_composio_connections_multi_account.sql` | Multi-account unique index. |
+
+### Callback failure reason codes
+
+| Reason | Server log prefix | Root cause | Fix |
+|--------|-------------------|------------|-----|
+| `oauth_not_success` | `[connectors/callback] oauth_not_success` | Provider denied access, user cancelled, or Composio did not return `connected_account_id`. | User must complete OAuth; verify toolkit is configured in Composio account. |
+| `no_user` | `[connectors/callback] no_user` | No `composio_cb` cookie (expired, wrong path, different browser) and no valid `cbt` token and no live Supabase session. | Start flow from the app (sets cookie); for bot flow pass a real `userId`. |
+| `no_service_role` | `[connectors/callback] no_service_role` | Env var missing. Callback cannot write to DB (RLS blocks anonymous inserts). | Set `SUPABASE_SERVICE_ROLE_KEY` in Railway env vars. |
+| `db_error` | `[connectors/callback] db_error` | Table missing (migrations not applied), constraint violation, or upsert exception. | Run both Composio migrations (`20260318`, `20260319`). |
+
+### Invariants
+
+- Do **not** add a second callback URL. Single callback: `/dashboard/connectors/callback`.
+- Do **not** duplicate Composio SDK logic. Single integration module: `src/integrations/composio.js`.
+- Callback is intentionally **not** behind `requireUser()` — the redirect from Composio has no session.
+- `sameSite=lax` on all auth cookies so they survive the top-level redirect back from Composio.
 
 ---
 

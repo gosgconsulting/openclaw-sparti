@@ -116,7 +116,7 @@ When the user sends a **single message** that includes both the app name and the
 
 ## Flow 1 — OAuth (redirect link)
 
-Call the connect-link endpoint. Always pass `userId` (the user's Supabase UUID from `SPARTI_USER_ID` env or the `x-user-id` header) and `returnTo: "/connected"` so the user lands on a clean "you're connected, close this tab" page after authorizing.
+Call the connect-link endpoint. You **must** pass `userId` (the user's Supabase UUID from `SPARTI_USER_ID` env or the `x-user-id` header) — the endpoint returns 400 if `userId` is missing. Always pass `returnTo: "/connected"` so the user lands on a clean "you're connected, close this tab" page after authorizing.
 
 ```bash
 curl -s -X POST http://127.0.0.1:${PORT:-8080}/api/composio/connect-link \
@@ -141,7 +141,7 @@ Send the `redirectUrl` to the user. Example reply:
 > The link is single-use and expires if you close it without completing the authorization. After authorizing, you'll see a confirmation page — you can close it and come back here.
 
 **Why pass `userId` and `returnTo`?**
-- `userId`: ensures the connection is saved under your Supabase account (not a generic bot session). Use `SPARTI_USER_ID` env var if set, or the `x-user-id` value from the request context.
+- `userId`: **required** — ensures the connection is saved under the user's Supabase account. The endpoint returns 400 if omitted. Use `SPARTI_USER_ID` env var if set, or the `x-user-id` value from the request context.
 - `returnTo: "/connected"`: after OAuth, Composio redirects to a clean standalone page ("✅ Connected — close this tab") instead of the full dashboard. The connection is saved automatically in the background.
 
 ---
@@ -205,7 +205,7 @@ The connection is **immediately active** — no redirect needed. Reply to the us
 | HTTP status | Meaning | What to tell the user |
 |-------------|---------|----------------------|
 | 401 | SETUP_PASSWORD wrong or missing | "The server is not configured to manage integrations. Ask the admin to check SETUP_PASSWORD." |
-| 400 | Missing toolkitKey or credentials | Internal error — check your request. |
+| 400 | Missing toolkitKey, userId, or credentials | Internal error — check your request. Always pass `userId`. |
 | 503 | COMPOSIO_API_KEY not set | "Composio is not configured on this server. Ask the admin to set COMPOSIO_API_KEY in Railway." |
 | 502 | Composio API error | Tell the user the error message from the response body. |
 

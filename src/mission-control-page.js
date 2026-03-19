@@ -2418,11 +2418,22 @@ export function getMissionControlPageHTML({ userEmail, error } = {}) {
         return;
       }
       if (/connect=failed/.test(h)) {
-        history.replaceState(null, '', location.hash.replace(/&?connect=failed/, ''));
+        const reasonMatch = h.match(/connect_reason=([a-z_]+)/);
+        const reason = reasonMatch ? reasonMatch[1] : '';
+        history.replaceState(null, '', location.hash.replace(/&?connect=failed/, '').replace(/&?connect_reason=[a-z_]+/, ''));
         setPanel('integrations');
         setIntegrationTab('connectors');
         const errEl = document.getElementById('integrations-connectors-error');
-        if (errEl) { errEl.textContent = 'OAuth connection failed or was cancelled. Please try again.'; errEl.style.display = 'block'; }
+        if (errEl) {
+          const messages = {
+            oauth_not_success: 'OAuth was cancelled or the provider denied access. Please try again.',
+            no_user: 'Could not identify your account. Please make sure you start the connection from this app and try again.',
+            no_service_role: 'Server configuration issue — the service role key is not set. Contact the administrator.',
+            db_error: 'Failed to save the connection. The database may need migrations applied. Contact the administrator.',
+          };
+          errEl.textContent = messages[reason] || 'OAuth connection failed or was cancelled. Please try again.';
+          errEl.style.display = 'block';
+        }
         return;
       }
       // Normal navigation
